@@ -101,8 +101,7 @@ sub task {
 		say colored(['black on_green'], "\"$args->{cmd}\"\n") . ' has been done before';
 		$r{done} = 'before';
 		$r{'output.file.size'} = \%output_file_size;
-		p(%r, output => $args->{'log.fh'}) if defined $args->{'log.fh'};
-#		p %r;
+		p(%r, output => $args->{'log.fh'}, show_memsize => 0) if defined $args->{'log.fh'};
 		return \%r;
 	}
 	($r{stdout}, $r{stderr}, $r{'exit'}) = capture {
@@ -114,7 +113,7 @@ sub task {
 	$r{done} = 'now';
 	%output_file_size = map {$_ => -s $_} @output_files;
 #	p %r;
-	p(%r, output => $args->{'log.fh'}) if defined $args->{'log.fh'};
+	p(%r, output => $args->{'log.fh'}, show_memsize => 0) if defined $args->{'log.fh'};
 	if (($args->{'die'} == 1) && ($r{'exit'} != 0)) {
 		p %r;
 		die "$args->{cmd} failed"
