@@ -6,7 +6,7 @@ use Devel::Confess 'color';
 use Cwd 'getcwd';
 use warnings FATAL => 'all';
 package SimpleFlow;
-our $VERSION = 0.03;
+our $VERSION = 0.02;
 use Term::ANSIColor;
 use Scalar::Util 'openhandle';
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 0};
@@ -15,17 +15,7 @@ use Cwd 'getcwd';
 use warnings FATAL => 'all';
 use Capture::Tiny 'capture';
 use Exporter 'import';
-our @EXPORT = qw(say2 task);
-
-sub say2 { # say to both command line and
-	my ($msg, $fh) = @_;
-	if (not openhandle($fh)) {
-		p $args;
-		die "the filehandle given to $current_sub isn't actually a filehandle";
-	}
-	say $msg;
-	say $fh $msg;
-}
+our @EXPORT = qw(task);
 
 sub task {
 	my ($args) = @_;
@@ -45,7 +35,6 @@ sub task {
 		'die',			  # die if not successful; 0 or 1
 		'input.files',   # check for input files; SCALAR or ARRAY
 		'log.fh',        # print to filehandle
-		'note',          # a note for the log
 		'overwrite',     # 
 		'output.files'	  # product files that need to be checked; can be scalar or array
 	);
@@ -115,9 +104,6 @@ sub task {
 		overwrite       => $args->{overwrite},
 		'output.files' => [@output_files],
 	);
-	if (defined $args->{note}) {
-		$r{note} = $args->{note};
-	}
 	if (defined $args->{'input.files'}) {
 		$r{'input.files'} = $args->{'input.files'};
 		$r{'input.file.size'} = \%input_file_size;
@@ -127,7 +113,7 @@ sub task {
 		say colored(['black on_green'], "\"$args->{cmd}\"\n") . ' has been done before';
 		$r{done} = 'before';
 		$r{'output.file.size'} = \%output_file_size;
-		p(%r, output => $args->{'log.fh'}) if defined $args->{'log.fh'};
+		p(%r, output => $args->{'log.fh'}, show_memsize => 0) if defined $args->{'log.fh'};
 		return \%r;
 	}
 	($r{stdout}, $r{stderr}, $r{'exit'}) = capture {
@@ -140,12 +126,9 @@ sub task {
 	my @missing_output_files = grep {not -f -r $_} @output_files;
 	if (scalar @missing_output_files > 0) {
 		say STDERR "this input to $current_sub:";
-		say {$args->{'log.fh'}} "this input to $current_sub:" if defined $args->{'log.fh'};
-		p($args, output => $args->{'log.fh'}) if defined $args->{'log.fh'};
+		p $args;
 		say STDERR 'has these files missing:';
-		say {$args->{'log.fh'}} 'has these files missing:' if defined $args->{'log.fh'};
 		p @missing_output_files;
-		p(@missing_output_files, output => $args->{'log.fh'}) if defined $args->{'log.fh'};
 		die 'those above files should be made but are missing';
 	}
 	%output_file_size = map {$_ => -s $_} @output_files;
@@ -155,7 +138,7 @@ sub task {
 		p @files_with_zero_size;
 		warn 'the above output files have 0 size.';
 	}
-	p(%r, output => $args->{'log.fh'}) if defined $args->{'log.fh'};
+	p(%r, output => $args->{'log.fh'}, show_memsize => 0) if defined $args->{'log.fh'};
 	if (($args->{'die'} eq 'true') && ($r{'exit'} != 0)) {
 		p %r;
 		die "$args->{cmd} failed"
@@ -184,10 +167,9 @@ All tasks return a hash, showing at a minimum 1) exit code, 2) the directory tha
 
 the only required key/argument is `cmd`, but other arguments are possible:
 
-    die          # die if not successful; 'true' or 'false'
+    die			  # die if not successful; 0 or 1
     input.files  # check for input files before running; SCALAR or ARRAY
     log.fh       # print to filehandle
-    note         # a note for the log
     overwrite    # overwrite previously existing files: "true" or "false"
     output.files # product files that need to be checked; SCALAR or ARRAY
 
@@ -195,10 +177,9 @@ You may wish to output results to a logfile using a previously opened filehandle
 
     my ($fh, $fname) = tempfile( UNLINK => 0, DIR => '/tmp');
     my $t = task({
-        cmd            => 'which ln',
-        'log.fh'       => $fh,
-        'note'         => 'testing where ln comes from',
-        'output.files' => $fname,
-        overwrite      => 1
+    	cmd            => 'which ln',
+    	'log.fh'       => $fh,
+    	'output.files' => $fname,
+    	overwrite      => 1
     });
     close $fh;
