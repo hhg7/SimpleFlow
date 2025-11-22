@@ -19,9 +19,9 @@ our @EXPORT = qw(say2 task);
 
 sub say2 { # say to both command line and
 	my ($msg, $fh) = @_;
+	my $current_sub = (split(/::/,(caller(0))[3]))[-1]; # https://stackoverflow.com/questions/2559792/how-can-i-get-the-name-of-the-current-subroutine-in-perl
 	if (not openhandle($fh)) {
-		p $args;
-		die "the filehandle given to $current_sub isn't actually a filehandle";
+		die "the filehandle given to $current_sub with \"$msg\" isn't actually a filehandle";
 	}
 	say $msg;
 	say $fh $msg;
@@ -29,7 +29,7 @@ sub say2 { # say to both command line and
 
 sub task {
 	my ($args) = @_;
-	my $current_sub = (split(/::/,(caller(0))[3]))[-1]; # https://stackoverflow.com/questions/2559792/how-can-i-get-the-name-of-the-current-subroutine-in-perl
+	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
 	unless (ref $args eq 'HASH') {
 		die "args must be given as a hash ref, e.g. \"$current_sub({ data => \@blah })\"";
 	}
