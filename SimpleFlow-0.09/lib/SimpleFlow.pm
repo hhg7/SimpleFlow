@@ -6,7 +6,7 @@ use Devel::Confess 'color';
 use Cwd 'getcwd';
 use warnings FATAL => 'all';
 package SimpleFlow;
-our $VERSION = 0.08;
+our $VERSION = 0.09;
 use Time::HiRes;
 use Term::ANSIColor;
 use Scalar::Util 'openhandle';
@@ -193,7 +193,7 @@ __END__
 
 =head1 NAME
 
-SimpleFlow - easy, simple workflow manager (and logger); for keeping track of and debugging large and complex shell command workflows
+SimpleFlow - easy, simple workflow manager (and logger)
 
 =head1 SYNOPSIS
 
@@ -226,10 +226,9 @@ You may wish to output results to a logfile using a previously opened filehandle
         overwrite      => 1
     });
     close $fh;
-
 =head1 Examples
 
-Consider a very complex pipeline in which mistakes are *very* easily made, and there are numerous files to keep track of.  SimpleFlow is designed to simplify these steps with a script, with automated checks at every step, in a very intuitive way:
+Consider a very complex pipeline in which mistakes are *very* easily made.  SimpleFlow is designed to simplify these steps with a script, with automated checks at every step, in a very intuitive way:
 
     my $g_tpr = "3md.$group.tpr";
     task({
@@ -258,6 +257,7 @@ Consider a very complex pipeline in which mistakes are *very* easily made, and t
     mkdir "xvg/$group" unless -d "xvg/$group";
     my $dir = "xvg/$group/" . sprintf '%u', $n;
     mkdir $dir unless -d $dir;
+    remove_backups();
     task({
     	cmd            => "gmx chi -s $g_tpr -f $subset_xtc -phi -psi -all",
     	'log.fh'       => $log,
