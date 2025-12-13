@@ -6,7 +6,7 @@ use Devel::Confess 'color';
 use Cwd 'getcwd';
 use warnings FATAL => 'all';
 package SimpleFlow;
-our $VERSION = 0.08;
+our $VERSION = 0.09;
 use Time::HiRes;
 use Term::ANSIColor;
 use Scalar::Util 'openhandle';
