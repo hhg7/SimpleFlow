@@ -26,10 +26,10 @@ The simplest useful case: run a command and confirm it produced its output:
 
     use SimpleFlow qw(task say2);
 
-    my $t = task(
+    my $t = task({
         cmd            => 'which ls',
         'output.files' => '/tmp/AFK3mnEK8L.log',
-    );
+    });
 
 `task` returns a hash reference describing exactly what happened:
 
@@ -113,12 +113,12 @@ exists, `task` does **not** re-run the command. This makes pipelines
 restartable: re-running the script picks up where it left off.
 
     open my $log, '>', 'logfile.txt';
-    my $t = task(
+    my $t = task({
         cmd            => 'gmx grompp -f em.mdp -c box.gro -p topol.top -o em.tpr',
         'input.files'  => ['em.mdp', 'box.gro', 'topol.top'],
         'output.files' => 'em.tpr',
         'log.fh'       => $log,
-    );
+    });
     close $log;
 
 On the first run `done` is `"now"`; on a re-run (with `em.tpr` present) `done`
@@ -128,11 +128,11 @@ is `"before"` and `will.do` is `"no"`. Pass `overwrite => 1` to force it.
 
 Useful for inspecting a pipeline without executing anything expensive:
 
-    my $t = task(
+    my $t = task({
         cmd       => 'a long-running, time-consuming command',
         'dry.run' => 1,
         'log.fh'  => $fh,
-    );
+    });
 
 The command is printed (and logged) but not run; `will.do` is `"no: dry run"`.
 
