@@ -168,7 +168,13 @@ Core/runtime modules used by SimpleFlow:
 The test suite additionally uses `Test::More` and
 [`Test::Exception`](https://metacpan.org/pod/Test::Exception).
 
-# Change log
+# Changes
+
+## 0.15 2026-07-11
+
+addition of `output.file` synonym for `output.files`
+
+improved coverage testing
 
 ## 0.14 (2026-06-29) (Claude Opus 4.8 helped)
 

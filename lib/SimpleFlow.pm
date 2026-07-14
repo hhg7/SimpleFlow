@@ -7,9 +7,8 @@ use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Cwd 'getcwd';
 package SimpleFlow;
-our $VERSION = 0.14;
+our $VERSION = 0.15;
 use Time::HiRes;
-use Term::ANSIColor;
 # Windows portability: the legacy Windows console (cmd.exe) prints raw ANSI
 # escape sequences as garbage. Disable colouring there unless a terminal that
 # understands ANSI is in use (Windows Terminal, ConEmu, ANSICON). Unix and
@@ -20,6 +19,29 @@ BEGIN {
 		&& !$ENV{WT_SESSION} # Windows Terminal
 		&& !$ENV{ConEmuANSI} # ConEmu
 		&& !$ENV{ANSICON};   # ANSICON
+}
+
+# Minimal drop-in for Term::ANSIColor's colored(\@attrs, $text): map the few
+# colour names we use to SGR codes so Perl core alone can colour the output.
+# Honours $ENV{ANSI_COLORS_DISABLED} at call time (set above and by the caller).
+my %ANSI_CODE = (
+	reset         =>   0,
+	black         =>  30,
+	red           =>  31,
+	green         =>  32,
+	blue          =>  34,
+	on_black      =>  40,
+	on_green      =>  42,
+	on_bright_red => 101,
+);
+sub colored {
+	my ($attrs, $text) = @_;
+	return $text if $ENV{ANSI_COLORS_DISABLED};
+	my @codes = map {
+		$ANSI_CODE{$_} // die "unknown colour attribute '$_'"
+	} split ' ', join ' ', @$attrs;
+	return $text unless @codes;
+	return "\e[" . join(';', @codes) . 'm' . $text . "\e[0m";
 }
 use Scalar::Util 'openhandle';
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
@@ -68,13 +90,14 @@ sub task {
 		die 'the above args are necessary, but were not defined.';
 	}
 	my @defined_args = ( @reqd_args,
-		'die',			  # die if not successful; 0 or 1
-		'dry.run',       # dry run or not
-		'input.files',   # check for input files; SCALAR or ARRAY
+		'die',			# die if not successful; 0 or 1
+		'dry.run',     # dry run or not
+		'input.files', # check for input files; SCALAR or ARRAY
 		'log.fh',
-		'note',          # a note for the log
-		'overwrite',     # 
-		'output.files'	  # product files that need to be checked; can be scalar or array
+		'note',        # a note for the log
+		'overwrite',   # bool
+		'output.file', # for a single file, gets pushed into output.files anyway
+		'output.files'	# product files that need to be checked; can be scalar or array
 	);
 	my @bad_args = grep { my $key = $_; not grep {$_ eq $key} @defined_args} keys %{ $args };
 	if (scalar @bad_args > 0) {
@@ -131,6 +154,9 @@ sub task {
 			p $args;
 			die "$ref isn't allowed for \"output.files\"";
 		}
+	}
+	if (defined $args->{'output.file'}) {
+		push @output_files, $args->{'output.file'};
 	}
 	@empty_filenames = grep {(defined $_) && (length $_ == 0)} @output_files; # 0-length filenames aren't allowed
 	if (scalar @empty_filenames > 0) {
@@ -536,9 +562,10 @@ Core/runtime modules used by SimpleFlow:
 
 =item * L<Devel::Confess> better backtraces on death
 
-=item * L<Term::ANSIColor> coloured terminal output
-
 =item * C<List::Util>, C<Scalar::Util>, C<Time::HiRes>, C<Cwd> core utilities
+
+=item * Coloured terminal output uses raw ANSI escape sequences (no
+C<Term::ANSIColor> dependency), honouring C<$ENV{ANSI_COLORS_DISABLED}>
 
 =back
 
@@ -546,6 +573,18 @@ The test suite additionally uses C<Test::More> and
 L<Test::Exception>.
 
 =head1 Change log
+
+=head2 0.15 (2026-07-13) (Claude Opus 4.8 helped)
+
+=over
+
+=item * B<Dropped the C<Term::ANSIColor> dependency.> The handful of colours the
+module emits are now produced directly with raw ANSI escape sequences by a
+small internal C<colored()> helper, so no non-core module is needed for
+coloured output. The helper still honours C<$ENV{ANSI_COLORS_DISABLED}>, so
+the existing legacy-Windows-console suppression is unchanged.
+
+=back
 
 =head2 0.14 (2026-06-29) (Claude Opus 4.8 helped)
 
