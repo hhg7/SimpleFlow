@@ -217,6 +217,56 @@ subtest 'output.files normalisation and output.file.size' => sub {
 	unlink $o1;
 };
 
+# --- output.file: single-file convenience form ---------------------------
+subtest 'output.file (single file)' => sub {
+	my (undef, $o1) = tempfile(UNLINK => 0, SUFFIX => '.dat');
+	my $t = task({
+		cmd           => qq{$PERL -e "print 12345" > "$o1"}, # writes exactly 5 bytes
+		'output.file' => $o1,
+		overwrite     => 'true',
+	});
+	is(ref $t->{'output.files'}, 'ARRAY', 'output.file is folded into the output.files arrayref');
+	is_deeply($t->{'output.files'}, [$o1], 'output.files arrayref holds the single filename');
+	is($t->{'output.file.size'}{$o1}, 5,      'output.file.size reports the byte count');
+	is($t->{'output.file.size'}{$o1}, -s $o1, 'output.file.size matches -s on disk');
+
+	# it must drive the "already done" skip logic just like output.files does
+	my $again = task({
+		cmd           => qq{$PERL -e "print 12345" > "$o1"},
+		'output.file' => $o1,
+		overwrite     => 0,
+	});
+	is($again->{done}, 'before', 'output.file that already exists is detected as done before');
+
+	unlink $o1;
+};
+
+# --- output.file / output.files are mutually exclusive and single-valued --
+subtest 'output.file validation' => sub {
+	dies_ok {
+		task({
+			cmd            => perl_cmd('exit 0'),
+			'output.file'  => 'a.dat',
+			'output.files' => 'b.dat',
+		})
+	} 'dies when both output.file and output.files are given';
+
+	dies_ok {
+		task({
+			cmd           => perl_cmd('exit 0'),
+			'output.file' => ['a.dat', 'b.dat'], # a list is not allowed here
+		})
+	} 'dies when output.file is given a reference instead of a single filename';
+
+	throws_ok {
+		task({
+			cmd           => perl_cmd('exit 0'),
+			'output.file' => '', # 0-length filename
+			die           => 0,
+		})
+	} qr/0-length filenames/, 'dies on a 0-length output.file';
+};
+
 # --- input.files: scalar + array forms, and input.file.size --------------
 subtest 'input.files and input.file.size' => sub {
 	my ($fh1, $i1) = tempfile(UNLINK => 0); print {$fh1} 'abc';  close $fh1; # 3 bytes

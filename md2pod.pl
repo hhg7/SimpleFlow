@@ -1,13 +1,16 @@
 #!/usr/bin/env perl
 
-require 5.010;
-use feature 'say';
+use 5.044;
+no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':default';
 #use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Markdown::To::POD 'markdown_to_pod';
 use List::MoreUtils 'first_index';
+use Test::More;
+use Test::Pod;
+use Test::CPAN::Changes;
 
 sub file2string {
 	my $file = shift;
@@ -227,3 +230,76 @@ push @lib, '', @pod;   # blank line so the POD '=' directive is recognised
 open my $out_fh, '>', 'lib/SimpleFlow.pm';
 say $out_fh join ("\n", @lib);
 close $out_fh;
+
+
+pod_file_ok( 'lib/SimpleFlow.pm' );
+
+my $outfile = 'Changes';
+my $dist    = 'SimpleFlow'; # Inferred from your documentation
+
+open my $out, '>', $outfile or die "Cannot write $outfile: $!\n";
+
+# Write the mandatory CPAN::Changes::Spec header
+say $out "Revision history for $dist\n";
+
+my ($needs_bullet, $in_code_block) = (0, 0);
+my @md_later = split /\n/, $md;
+my $fi = first_index {$_ eq '# Changes'} @md_later;
+die 'Could not find a "# Changes" heading in README.md' if $fi == -1;
+# Start *after* the "# Changes" heading so the title itself is not emitted.
+foreach my $i ($fi + 1 .. $#md_later) {
+	my $line = $md_later[$i];
+	# Stop at the copyright footer; skip any other stray top-level heading.
+	last if $line =~ /^#\s+COPYRIGHT AND LICENSE\s*$/i;
+	next if $line =~ /^#\s+\S/ && $line !~ /^#{2,}/;
+	# Toggle markdown code blocks (```)
+	if ($line =~ /^```/) {
+	  $in_code_block = !$in_code_block;
+	  next;
+	}
+	# Handle Versions (e.g., "## 0.21 2026-01-13" or "## 0.21"). The date/note
+	# after the version is optional so a version line is always recognised as a
+	# release (and never mis-parsed as body text) even if a date is omitted.
+	if ($line =~ /^##\h+([\d\._]+)(?:\h+(.+))?\s*$/) {
+	  say $out defined $2 ? "$1 $2" : $1;
+	  $needs_bullet = 1;
+	} elsif ($line =~ /^###\s+(.+)/) {# Handle Groups (e.g., "### read_table")
+	  print $out " [$1]\n";
+	  $needs_bullet = 1;
+	} elsif ($line =~ /^####\s+(.+)/) {
+	# Handle Sub-Groups (e.g., "#### Bug fixes")
+	  # CPAN Spec doesn't formally have sub-groups, so we format it as a distinct bulleted header
+	  say $out " - $1:";
+	  $needs_bullet = 1;
+	} elsif ($line =~ /^\s*[-*]\s+(.+)/) {	# Handle explicit Markdown bullets
+	  print $out " - $1\n";
+	  $needs_bullet = 0;
+	} elsif ($line =~ /^\s*$/) {# Handle empty lines
+	  say $out '';
+	  $needs_bullet = 1; # Reset so the next text block gets a bullet
+	} else {# Handle normal text or indented code
+		# If it's 4-space indented code from Markdown, keep it indented for CPAN
+		if ($line =~ /^\s{4,}(.+)/ || $in_code_block) {
+			my $code_line = $1 || $line;
+			$code_line =~ s/^\s+//; # strip leading space to normalize
+			say $out "     $code_line";
+		} else {
+			# Strip leading/trailing formatting like **bold** just in case it breaks flow, 
+			# though CPAN::Changes technically allows it as raw text.
+			$line =~ s/\*\*(.+?)\*\*/$1/g; 
+			if ($needs_bullet) {
+				 print $out " - $line\n";
+				 $needs_bullet = 0;
+			} else {
+				 # Continuation of the previous bullet
+				 print $out "   $line\n";
+			}
+		}
+	}
+}
+
+close $out;
+
+say "Successfully generated '$outfile' from 'README.md'";
+changes_file_ok('Changes');
+done_testing();
