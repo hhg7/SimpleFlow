@@ -521,6 +521,16 @@ sub task {
 
 =encoding utf8
 
+=head1 NAME
+
+SimpleFlow - easy, simple workflow manager (and logger); for keeping track of and debugging large and complex shell command workflows
+
+=head1 VERSION
+
+version 0.16
+
+=head1 DESCRIPTION
+
 A tiny workflow manager and logger for Perl, like SnakeMake or NextFlow, but in pure Perl and aimed at making long, error-prone shell pipelines easy to B<debug> and B<reproduce>.
 
 Every step is a single C<task()> call. SimpleFlow checks the inputs before a

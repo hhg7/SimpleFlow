@@ -12,6 +12,10 @@ meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
   version: '1.4'
 name: SimpleFlow
+provides:
+  SimpleFlow:
+    file: lib/SimpleFlow.pm
+    version: '0.16'
 requires:
   Capture::Tiny: '0'
   Cwd: '0'

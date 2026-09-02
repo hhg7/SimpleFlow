@@ -11,6 +11,7 @@ use List::MoreUtils 'first_index';
 use Test::More;
 use Test::Pod;
 use Test::CPAN::Changes;
+use Module::CPANTS::Analyse;
 
 sub file2string {
 	my $file = shift;
@@ -173,6 +174,96 @@ sub extract_and_convert_tables {
 	return (join("\n", @out), \@saved_tables);
 }
 
+# The distribution's identity, read out of the module rather than repeated
+# here: the package statement, the "# ABSTRACT:" line that dzil turns into
+# META's abstract, and $VERSION.
+sub module_identity {
+	my ($file) = @_;
+	my $src = file2string($file);
+	my ($package)  = $src =~ /^\s*package\s+([\w:]+)\s*;/m;
+	my ($version)  = $src =~ /^\s*our\s+\$VERSION\s*=\s*'([^']+)'/m;
+	my ($abstract) = $src =~ /^\s*#\s*ABSTRACT:\s*(.+?)\s*$/m;
+	die "Could not find a package statement in $file" unless defined $package;
+	# Only the quoted form is matched on purpose. $VERSION is a string because
+	# a bare 0.20 is stringified through %g to "0.2" and then compares as older
+	# than "0.15" on CPAN; a bare number here is a defect to report, not to
+	# quietly accept.
+	die "Could not find a quoted \$VERSION in $file" unless defined $version;
+	die "Could not find a '# ABSTRACT:' line in $file" unless defined $abstract;
+	# dzil's abstract is the description on its own, but this one is written
+	# with the module name in front of it and the NAME line supplies that name
+	# again. Drop the duplicate rather than emit "SimpleFlow - SimpleFlow - ...".
+	$abstract =~ s/^\Q$package\E\s*-+\s*//;
+	return ($package, $version, $abstract);
+}
+
+# CPANTS scores a distribution's tarball, so the check below needs one, and the
+# tarball that matters is the one for the version in lib/SimpleFlow.pm. `dzil
+# clean` deletes every SimpleFlow-*.tar.gz before `dzil build` writes the new
+# one, so at the point dzil.sh runs md2pod.pl the current version's tarball does
+# not exist yet: fall back to the newest one present, and let the caller say so.
+sub dist_tarball {
+	my ($version) = @_;
+	my @tarballs = glob 'SimpleFlow-*.tar.gz';
+	my $current  = "SimpleFlow-$version.tar.gz";
+	return $current if grep { $_ eq $current } @tarballs;
+	# Perl versions of this shape are decimals, so 0.9 is newer than 0.16 and
+	# only a numeric comparison -- not a string one -- picks the right tarball.
+	my @newest_last =
+		map  { $_->[1] }
+		sort { $a->[0] <=> $b->[0] }
+		map  { [ (/^SimpleFlow-([\d.]+)\.tar\.gz$/ ? $1 : 0), $_ ] } @tarballs;
+	return $newest_last[-1];   # undef when the glob matched nothing
+}
+
+# The kwalitee score, measured the way CPANTS itself measures it: with
+# Module::CPANTS::Analyse on the built tarball. The score is out of the number
+# of metrics the analyser reports, so "as good as it gets" is exactly "no
+# metric came back false", and the diagnostics name any that did. 0.16 scored
+# 30/33 before 2026-09-02, failing has_abstract_in_pod -- which the NAME header
+# this script writes exists to fix -- plus has_meta_json and
+# meta_yml_has_provides, fixed by [MetaJSON] and [MetaProvides::Package] in
+# dist.ini. None of the three can be lost silently now.
+sub kwalitee_test {
+	my ($version) = @_;
+	my $tarball = dist_tarball($version);
+	unless (defined $tarball) {
+		fail 'a SimpleFlow tarball is present to measure kwalitee on';
+		diag 'No SimpleFlow-*.tar.gz in the repository root; run `dzil build`.';
+		return;
+	}
+	diag "kwalitee measured on $tarball, not on the current version $version"
+		unless $tarball eq "SimpleFlow-$version.tar.gz";
+	my $analyse = Module::CPANTS::Analyse->new({dist => $tarball});
+	$analyse->run;
+	my $k = $analyse->d->{'kwalitee'};
+	# One key per metric, plus the 'kwalitee' total itself.
+	my @metrics = grep { $_ ne 'kwalitee' } sort keys %$k;
+	my @failed  = grep { !$k->{$_} } @metrics;
+	# Count the metrics before judging them: an analyser that returned nothing
+	# leaves @failed empty too, and "nothing failed" would then pass for the
+	# wrong reason. 33 is what Module::CPANTS::Analyse 1.03 reported on
+	# SimpleFlow-0.16.tar.gz on 2026-09-02; a later release may add metrics, so
+	# this is a floor rather than an equality.
+	ok scalar(@metrics) >= 33,
+		sprintf 'CPANTS reported %d kwalitee metrics on %s', scalar @metrics, $tarball;
+	is $k->{'kwalitee'}, scalar @metrics,
+		sprintf '%s scores kwalitee %d/%d', $tarball, $k->{'kwalitee'}, scalar @metrics;
+	diag "failed kwalitee metric: $_" for @failed;
+	return;
+}
+
+# dzil.sh re-invokes the script this way after `dzil build`, so that the score
+# is measured on the tarball just built rather than on the previous release's,
+# which is all that exists while the documentation above is being generated.
+if (grep { $_ eq '--kwalitee-only' } @ARGV) {
+	my (undef, $built_version) = module_identity('lib/SimpleFlow.pm');
+	kwalitee_test($built_version);
+	done_testing();
+	# Test::Builder's END block still sets a failing exit status through this.
+	exit 0;
+}
+
 my $md = file2string('README.md');
 
 # 0. Map heading anchors to titles so internal links can be resolved.
@@ -204,8 +295,37 @@ for my $idx (0 .. $#$tables_ref) {
 	$pod =~ s/HTMLTABLEPLACEHOLDER${idx}\b/$table_html/g;
 }
 
+my ($package, $version, $abstract) = module_identity('lib/SimpleFlow.pm');
+
 my @pod = split /\n/, $pod;
-unshift @pod, "=encoding utf8\n";
+shift @pod while (scalar @pod > 0) && ($pod[0] =~ /^\s*$/);
+
+# CPANTS reads a distribution's abstract out of the POD itself: it scans =head
+# sections for a "<Package> - <abstract>" line (Module::CPANTS::Kwalitee::Pod
+# 1.03, _parse_abstract) and fails has_abstract_in_pod when no file in the
+# distribution has one, which is why SimpleFlow 0.16 scored 30/33 where
+# Stats::LikeR scores 33/33. README.md has no NAME heading and should not grow
+# one -- it is read as a web page -- so the section is written here instead, in
+# the form Pod::Weaver emits for Stats::LikeR.
+my @header = (
+	'=encoding utf8',
+	'',
+	'=head1 NAME',
+	'',
+	"$package - $abstract",
+	'',
+	'=head1 VERSION',
+	'',
+	"version $version",
+	'',
+);
+
+# README.md opens with prose, and POD has nowhere to put a paragraph that comes
+# before every heading: left where it is, it renders as the body of the VERSION
+# section. Give it the heading a reader expects to find it under.
+push @header, ('=head1 DESCRIPTION', '') if (scalar @pod > 0) && ($pod[0] !~ /^=/);
+
+unshift @pod, @header;
 
 say 'Writing read.me.pod from README.md, which must be copied into lib/SimpleFlow.pm';
 open my $fh, '>', 'read.me.pod';
@@ -233,6 +353,19 @@ close $out_fh;
 
 
 pod_file_ok( 'lib/SimpleFlow.pm' );
+
+# The NAME section above exists for has_abstract_in_pod, so check the files that
+# were actually written the way CPANTS reads them -- the abstract line must sit
+# inside a =head section and match "<Package> - <abstract>"
+# (Module::CPANTS::Kwalitee::Pod 1.03, _parse_abstract) -- rather than trust
+# that the header was emitted.
+foreach my $generated ('lib/SimpleFlow.pm', 'read.me.pod') {
+	like(
+		file2string($generated),
+		qr/^=head1 NAME\n\n\Q$package\E\s+-+\s+\S/m,
+		"$generated carries a NAME abstract that CPANTS can read"
+	);
+}
 
 my $outfile = 'Changes';
 my $dist    = 'SimpleFlow'; # Inferred from your documentation
@@ -302,4 +435,6 @@ close $out;
 
 say "Successfully generated '$outfile' from 'README.md'";
 changes_file_ok('Changes');
+
+kwalitee_test($version);
 done_testing();
