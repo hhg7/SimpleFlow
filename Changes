@@ -32,6 +32,19 @@ Revision history for SimpleFlow
      catches an unquoted version, since with the quotes off 0.161 the module
      still reports "0.161" and any pattern on the digits passes.
 
+ - A passing run of the suite no longer looks like a crash. task() prints the
+     result record, and its failure paths dump the arguments with `p` and then
+     warn or die on the terminal -- all as documented -- so the three test
+     files together printed some 1,180 lines of record dumps and eight
+     backtraces on a clean, wholly successful run. Every call whose printing is
+     not itself under test now goes through a `quietly` helper that captures
+     both streams with `Capture::Tiny`, and the expected diagnostics are
+     asserted on rather than discarded: `prove -Ilib t/` prints TAP and nothing
+     else. Capturing was chosen over passing `quiet => 1` because it leaves the
+     arguments handed to task() unchanged, which is what keeps blocks 1-11 of
+     `t/02.fixes.t` runnable against 0.15 (re-checked: they still fail there).
+     No module behaviour changed.
+
  [Documentation]
 
  - README.md no longer carries the release notes, so they are no longer copied
