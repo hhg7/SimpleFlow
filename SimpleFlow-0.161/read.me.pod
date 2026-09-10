@@ -1,0 +1,437 @@
+=encoding utf8
+
+=head1 NAME
+
+SimpleFlow - easy, simple workflow manager (and logger); for keeping track of and debugging large and complex shell command workflows
+
+=head1 VERSION
+
+version 0.161
+
+=head1 DESCRIPTION
+
+A tiny workflow manager and logger for Perl, like SnakeMake or NextFlow, but in pure Perl and aimed at making long, error-prone shell pipelines easy to B<debug> and B<reproduce>.
+
+Every step is a single C<task()> call. SimpleFlow checks the inputs before a
+command runs and the outputs after, times the command, captures its C<stdout>,
+C<stderr>, exit code and signal, optionally logs a full structured record, and
+skips work that has already been done. It can also bound a step with a
+L<timeout|/"Timeouts"> and rebuild L<out-of-date outputs|/"Out-of-date outputs">.
+
+Two subroutines are exported by default: L</"task"> and L</"say2">.
+
+=head1 Install
+
+With a CPAN client:
+
+ cpanm SimpleFlow
+
+Or from a checkout:
+
+ perl Makefile.PL
+ make
+ make test
+ make install
+
+=head1 Synopsis
+
+The simplest useful case: run a command and confirm it produced its output:
+
+ use SimpleFlow qw(task say2);
+ 
+ my $t = task(
+     cmd            => 'which ls',
+     'output.files' => '/tmp/AFK3mnEK8L.log',
+ );
+
+C<task> returns a hash reference describing exactly what happened:
+
+ {
+     cmd            "which ls",
+     die            1,
+     dir            "/home/con/Scripts/SimpleFlow",
+     done           "now",
+     dry.run        0,
+     duration       0.00191903114318848,
+     exit           0,
+     note           "",
+     output.files   [
+         [0] "/tmp/AFK3mnEK8L.log"
+     ],
+     overwrite      1,
+     signal         0,
+     source.file    "t/01.t",
+     source.line    29,
+     stderr         "",
+     stdout         "/usr/bin/ls",
+     will.do        "done"
+ }
+
+ > B<Portability note.> SimpleFlow runs whatever shell command you give it via
+ > C<system()>, so the I<commands themselves> are your responsibility to keep
+ > cross-platform (e.g. C<which ls> is Unix-only). SimpleFlow's own behaviour
+ > exit/signal decoding and coloured output is cross-platform; see the
+ > change log.
+
+=head1 C<task>
+
+ my $result = task(%args);      # or task(\%args)
+
+Runs one command with checking, timing, capture and logging. Takes either a
+flat key/value list or a single hash reference; the only required key is C<cmd>.
+
+=head2 Arguments
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Key</th>
+  <th>Type</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>cmd</code></td>
+  <td>scalar or array</td>
+  <td><code>undef</code></td>
+  <td><b>Required.</b> The command to run. A string is handed to the shell; an array ref is run without a shell.</td>
+</tr>
+<tr>
+  <td><code>die</code></td>
+  <td>bool (<code>0</code>/<code>1</code>)</td>
+  <td><code>1</code></td>
+  <td>Die if the command fails (non-zero exit, timeout, or a missing output file). Set to <code>0</code> to warn and continue instead.</td>
+</tr>
+<tr>
+  <td><code>dry.run</code></td>
+  <td>bool</td>
+  <td><code>0</code></td>
+  <td>Print the command (and log it) but do not execute it.</td>
+</tr>
+<tr>
+  <td><code>input.files</code></td>
+  <td>scalar or array</td>
+  <td><code>undef</code></td>
+  <td>File(s) that must exist and be readable <b>before</b> running; otherwise <code>task</code> dies.</td>
+</tr>
+<tr>
+  <td><code>input.file</code></td>
+  <td>scalar</td>
+  <td><code>undef</code></td>
+  <td>Convenience form of <code>input.files</code> for a <b>single</b> file. Must be a plain filename (not a reference). Cannot be combined with <code>input.files</code>.</td>
+</tr>
+<tr>
+  <td><code>output.files</code></td>
+  <td>scalar or array</td>
+  <td><code>undef</code></td>
+  <td>File(s) expected to exist <b>after</b> running; used both for the missing-output check and for skip detection.</td>
+</tr>
+<tr>
+  <td><code>output.file</code></td>
+  <td>scalar</td>
+  <td><code>undef</code></td>
+  <td>Convenience form of <code>output.files</code> for a <b>single</b> file. Must be a plain filename (not a reference). Cannot be combined with <code>output.files</code>.</td>
+</tr>
+<tr>
+  <td><code>log.fh</code></td>
+  <td>open filehandle</td>
+  <td><code>undef</code></td>
+  <td>If given, the full result record is also written here. Must be a real, open filehandle; <code>task</code> switches it to autoflush.</td>
+</tr>
+<tr>
+  <td><code>note</code></td>
+  <td>scalar</td>
+  <td><code>''</code></td>
+  <td>Free-text note copied into the result and the log.</td>
+</tr>
+<tr>
+  <td><code>overwrite</code></td>
+  <td>bool</td>
+  <td><code>0</code></td>
+  <td>If false and all <code>output.files</code> already exist, the command is skipped. Set true to always run.</td>
+</tr>
+<tr>
+  <td><code>quiet</code></td>
+  <td>bool</td>
+  <td><code>0</code></td>
+  <td>Suppress the record printed to the terminal. The log and error messages on <code>STDERR</code> are unaffected. See Quiet runs.</td>
+</tr>
+<tr>
+  <td><code>stale</code></td>
+  <td>bool</td>
+  <td><code>0</code></td>
+  <td>Also re-run when an input file is newer than an output file. See Out-of-date outputs.</td>
+</tr>
+<tr>
+  <td><code>timeout</code></td>
+  <td>whole seconds</td>
+  <td><code>0</code></td>
+  <td>Kill the command if it runs longer than this. <code>0</code> means no limit. See Timeouts.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Passing an unrecognised key, an undefined or empty filename, a C<cmd> that is
+neither a string nor an array ref, or a non-filehandle C<log.fh> causes C<task>
+to die: these are usually mistakes worth catching early. Giving both
+C<output.file> and C<output.files> (or both C<input.file> and C<input.files>), or a
+reference where a single filename is expected, dies for the same reason.
+
+=head2 Return value
+
+C<task> always returns a hash reference. Every field below except the two
+C<input.*> ones is present on B<every> path, so a caller running under
+C<< use warnings FATAL =E<gt> 'all' >> can read the record after a skip or a dry run
+without an uninitialized-value warning turning fatal. On those paths the
+execution-only fields simply hold their empty values (C<exit> and C<signal> are
+C<0>, C<stdout> and C<stderr> are C<''>, C<duration> is C<0>).
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Field</th>
+  <th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>cmd</code></td>
+  <td>The command that was run. An array-ref <code>cmd</code> is recorded space-joined for readability; that is not a shell-quoted round trip, since it never went near a shell.</td>
+</tr>
+<tr>
+  <td><code>dir</code></td>
+  <td>Working directory at execution time.</td>
+</tr>
+<tr>
+  <td><code>done</code></td>
+  <td><code>"now"</code> (just ran), <code>"before"</code> (skipped, outputs already existed), or <code>"not yet"</code> (dry run).</td>
+</tr>
+<tr>
+  <td><code>will.do</code></td>
+  <td><code>"done"</code>, <code>"no"</code> (skipped), <code>"no: dry run"</code>, or <code>"FAILED"</code>. <code>"FAILED"</code> is set whenever the command exited non-zero, timed out, or left a declared output file missing — <b>whether or not <code>die</code> is set</b>.</td>
+</tr>
+<tr>
+  <td><code>duration</code></td>
+  <td>Wall-clock seconds the command took (<code>0</code> for skips/dry runs).</td>
+</tr>
+<tr>
+  <td><code>exit</code></td>
+  <td>Exit code of the command (<code>-1</code> if it could not be launched).</td>
+</tr>
+<tr>
+  <td><code>signal</code></td>
+  <td>Signal number if the command process was killed by a signal, else <code>0</code>. Always <code>0</code> on Windows (no POSIX signals).</td>
+</tr>
+<tr>
+  <td><code>timed.out</code></td>
+  <td><code>1</code> if the command was killed for exceeding its <code>timeout</code>, else <code>0</code>.</td>
+</tr>
+<tr>
+  <td><code>out.of.date</code></td>
+  <td><code>1</code> if <code>stale</code> was set and an input was newer than an output, else <code>0</code>.</td>
+</tr>
+<tr>
+  <td><code>stdout</code>, <code>stderr</code></td>
+  <td>Captured output, with trailing whitespace stripped.</td>
+</tr>
+<tr>
+  <td><code>die</code>, <code>dry.run</code>, <code>overwrite</code>, <code>note</code>, <code>quiet</code>, <code>stale</code>, <code>timeout</code></td>
+  <td>The (defaulted) argument values used.</td>
+</tr>
+<tr>
+  <td><code>output.files</code></td>
+  <td>Array ref of the output files (a scalar argument, or an <code>output.file</code>, is normalised to a one-element array).</td>
+</tr>
+<tr>
+  <td><code>output.file.size</code></td>
+  <td>Hash of <code>filename => size in bytes</code> for the outputs.</td>
+</tr>
+<tr>
+  <td><code>input.files</code></td>
+  <td>Array ref of the input files, normalised the same way (present only if you passed <code>input.files</code> or <code>input.file</code>).</td>
+</tr>
+<tr>
+  <td><code>input.file.size</code></td>
+  <td>Hash of <code>filename => size in bytes</code> for the inputs (present only if you passed <code>input.files</code> or <code>input.file</code>).</td>
+</tr>
+<tr>
+  <td><code>source.file</code>, <code>source.line</code></td>
+  <td>Where in <i>your</i> code the <code>task</code> was called: handy when debugging a long pipeline.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head2 Skipping completed work
+
+If C<overwrite> is false (the default) and every file in C<output.files> already
+exists, C<task> does B<not> re-run the command. This makes pipelines
+restartable: re-running the script picks up where it left off.
+
+ open my $log, '>', 'logfile.txt';
+ my $t = task(
+     cmd            => 'gmx grompp -f em.mdp -c box.gro -p topol.top -o em.tpr',
+     'input.files'  => ['em.mdp', 'box.gro', 'topol.top'],
+     'output.files' => 'em.tpr',
+     'log.fh'       => $log,
+ );
+ close $log;
+
+On the first run C<done> is C<"now">; on a re-run (with C<em.tpr> present) C<done>
+is C<"before"> and C<will.do> is C<"no">. Pass C<< overwrite =E<gt> 1 >> to force it.
+
+An output file that exists but cannot be B<read> does not count as done: it is
+not a usable result, and treating it as one would skip the very step that could
+replace it.
+
+=head2 Out-of-date outputs
+
+Existence alone is a weak test. If an input file has been edited since the
+output was built, the output is stale even though it is present — and by
+default C<task> will still skip the step, exactly as earlier versions did.
+
+Pass C<< stale =E<gt> 1 >> to get the rule C<make> and C<snakemake> use: re-run whenever
+the newest C<input.files> mtime is later than the oldest C<output.files> mtime.
+
+ my $t = task(
+     cmd            => 'gmx grompp -f em.mdp -c box.gro -p topol.top -o em.tpr',
+     'input.files'  => ['em.mdp', 'box.gro', 'topol.top'],
+     'output.files' => 'em.tpr',
+     stale          => 1,
+ );
+
+Editing C<em.mdp> now rebuilds C<em.tpr>; leaving it alone still skips. The
+result's C<out.of.date> field says which of the two happened. This is off by
+default so that upgrading does not silently start re-running steps in pipelines
+written against 0.15 and earlier.
+
+=head2 Timeouts
+
+C<timeout> gives a step a wall-clock budget in whole seconds:
+
+ my $t = task(
+     cmd     => 'a command that sometimes wedges',
+     timeout => 600,
+     die     => 0,
+ );
+
+The command is run in its own process group and, if the budget is exceeded, the
+B<whole group> is killed — a shell command is usually a pipeline, not a single
+process, and killing only the shell would leave its children running. The
+result then has C<< timed.out =E<gt> 1 >> and C<< will.do =E<gt> "FAILED" >>; with the default
+C<< die =E<gt> 1 >> the pipeline stops there instead.
+
+C<timeout> needs C<fork()> and POSIX process groups, so it is refused on
+C<MSWin32>. Leaving it at C<0> (the default) changes nothing anywhere.
+
+=head2 Running without a shell
+
+Giving C<cmd> an array ref runs the command directly, with no shell in between:
+
+ my $t = task(
+     cmd           => ['gzip', '-9', $file],   # $file needs no quoting
+     'output.file' => "$file.gz",
+ );
+
+This is the form to reach for when an argument comes from data — a filename
+with a space, a quote, or a C<$> in it is passed through untouched instead of
+being re-parsed by the shell. You lose shell features (C<< E<gt> >>, C<|>, C<*>, C<&&>) in
+exchange; use the string form when you want them.
+
+=head2 Quiet runs
+
+Every C<task> prints its record to the terminal. Over a hundred-step pipeline
+that is a lot of scrollback, so C<< quiet =E<gt> 1 >> suppresses it:
+
+ my $t = task(
+     cmd      => 'one of very many steps',
+     'log.fh' => $log,
+     quiet    => 1,
+ );
+
+The log filehandle still receives the full record, and error messages still go
+to C<STDERR>: asking for less noise is not the same as asking to be kept in the
+dark about a failure.
+
+=head2 Dry runs
+
+Useful for inspecting a pipeline without executing anything expensive:
+
+ my $t = task(
+     cmd       => 'a long-running, time-consuming command',
+     'dry.run' => 1,
+     'log.fh'  => $fh,
+ );
+
+The command is printed (and logged) but not run; C<will.do> is C<"no: dry run">.
+
+=head2 Failure behaviour
+
+By default (C<< die =E<gt> 1 >>) C<task> dies if the command exits non-zero, exceeds its
+C<timeout>, or leaves any declared C<output.files> missing afterwards, so a broken
+step stops the pipeline immediately.
+
+With C<< die =E<gt> 0 >>, C<task> instead warns and returns its result hash with
+C<< will.do =E<gt> "FAILED" >>, letting you decide what to do:
+
+ my $t = task(cmd => 'a step that may fail', die => 0);
+ if ($t->{'will.do'} eq 'FAILED') {
+     ...   # $t->{'exit'}, $t->{stderr} and $t->{'timed.out'} say why
+ }
+
+=head2 C<say2>
+
+ say2($message, $filehandle);
+
+"Say to two places": prints C<$message> to standard output B<and> to the given
+log filehandle, prefixed with the calling file and line number so log entries
+are traceable. The filehandle must be open, or C<say2> dies.
+
+ open my $log, '>', 'run.log';
+ say2('starting equilibration', $log);   # -> STDOUT and run.log
+ close $log;
+
+=head1 Dependencies
+
+Core/runtime modules used by SimpleFlow:
+
+=over
+
+=item * L<Capture::Tiny> captures C<stdout>/C<stderr>
+
+=item * L<Data::Printer> (C<DDP>) pretty result/record printing
+
+=item * L<Devel::Confess> better backtraces on death
+
+=item * C<List::Util>, C<Scalar::Util>, C<Time::HiRes>, C<Cwd>, C<POSIX> core utilities
+
+=back
+
+The test suite additionally uses C<Test::More> and
+L<Test::Exception>.
+
+=head1 Changes
+
+The release notes are in the C<Changes> file at the root of the
+distribution, in the format CPAN itself reads.
+
+=head1 COPYRIGHT AND LICENSE
+
+This software is free.  It is licensed under the same terms as Perl itself
