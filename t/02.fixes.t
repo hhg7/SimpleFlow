@@ -13,6 +13,10 @@
 # Blocks 12-16 cover options that are new in 0.16 (stale, input.file, quiet,
 # timeout) and cannot run against an older module at all.
 #
+# Block 17 is a regression test for a defect in 0.16 itself, reported by a CPAN
+# tester: it was confirmed to FAIL against 0.16 before that fix went in, and it
+# too uses only arguments 0.15 accepted.
+#
 # Two of these tests would once have passed for the wrong reason -- an assertion
 # that something is empty passes when the probe producing it never ran. Those
 # now assert a positive sentinel first; the comments at each site say so.
@@ -267,12 +271,26 @@ PROBE
 # --- 10. $VERSION is a quoted string --------------------------------------
 # As a bare number it is stringified through %g, so a future 0.20 would become
 # "0.2" and compare as OLDER than "0.15" on CPAN.
+#
+# Two decimal places or more, not exactly two: this asked for exactly two until
+# 0.161, which is a point release on 0.16 and keeps three on purpose. What %g
+# would destroy is a trailing zero, so the invariant is that every decimal the
+# source wrote is still there -- 0.161 has three digits and prints three.
 subtest '$VERSION is a quoted string' => sub {
 	my $source = do { open my $fh, '<', $module_path or die; local $/; <$fh> };
 	like($source, qr/our \s* \$VERSION \s* = \s* ['"]/x,
 		'the $VERSION literal is quoted in the source');
-	like($SimpleFlow::VERSION, qr/^\d+\.\d\d$/,
-		'the version keeps both decimal places (a bare 0.20 would stringify to "0.2")');
+	my ($literal) = $source =~ /our \s* \$VERSION \s* = \s* ['"]([^'"]+)['"]/x;
+	like($SimpleFlow::VERSION, qr/^\d+\.\d\d+$/,
+		'the version keeps at least two decimal places (a bare 0.20 would stringify to "0.2")');
+	# The literal and what the module ends up with have to be the same string.
+	# The pattern above cannot stand in for this: with the quotes taken off
+	# 0.161 the module still reports "0.161" and the pattern passes, and only
+	# this comparison fails (checked both ways, 2026-09-10). It is the digits
+	# that decide whether %g destroys anything, so the shorter the version the
+	# more the pattern misses.
+	is($SimpleFlow::VERSION, $literal,
+		'$VERSION is the string the source wrote, digit for digit');
 };
 
 # --- 11. string_max is capped ----------------------------------------------
@@ -451,5 +469,103 @@ SKIP: {
 		ok(! -e $marker, 'the killed command did not go on to do its work as an orphan');
 	};
 }
+
+# --- 17. the cap must not depend on Data::Printer's version ---------------
+# "string_max" is a Data::Printer property that arrived in 0.99_001
+# (2018-04-21, per that distribution's Changes); every earlier release
+# silently ignores a property it does not know. 0.16 capped the record by
+# handing string_max to Data::Printer and leaving the clipping to it, so on a
+# CPAN tester running Data::Printer 0.38 nothing was capped at all: a
+# 200,000-character capture wrote 200,927 bytes to the terminal and 200,914
+# bytes to the log (report from perl 5.20.0, 2026-09-05). SimpleFlow clips the
+# strings itself now, before they are printed.
+#
+# The probe loads a stub DDP that ignores every property it is given -- which
+# is precisely what those releases did -- because that is the only way to
+# reproduce the flood on a machine whose Data::Printer is current, and it
+# needs no network and nothing installed.
+subtest 'the record is clipped whatever Data::Printer does with string_max' => sub {
+	my $bytes        = 200_000;
+	my $stub_dir     = File::Spec->catdir($dir, 'old_ddp');
+	my $log_name     = "$dir/version.log";
+	my $terminal_out = "$dir/version.terminal";
+	my $capture_len  = "$dir/version.capturelen";
+	my $script       = "$dir/version_probe.pl";
+
+	mkdir $stub_dir or die "cannot create $stub_dir: $!";
+	open my $stub, '>', File::Spec->catfile($stub_dir, 'DDP.pm')
+		or die "cannot write the stub DDP: $!";
+	print {$stub} <<'STUB';
+# A stand-in for Data::Printer as it was before 0.99_001: it exports "p" with
+# the same prototype, and it drops every property it is handed -- string_max
+# included -- on the floor. "stub-DDP" heads each dump so that the test can
+# tell this printer really was the one that ran.
+package DDP;
+use strict;
+use warnings;
+sub import {
+	my $caller = caller; # the properties, if any, are ignored
+	no strict 'refs';
+	*{$caller . '::p'}  = \&p;
+	*{$caller . '::np'} = \&np;
+	return;
+}
+sub _dump {
+	my $thing = shift;
+	return 'undef' unless defined $thing;
+	return join('',  map {_dump($thing->{$_}) . "\n"} sort keys %$thing) if ref $thing eq 'HASH';
+	return join('',  map {_dump($_) . "\n"} @$thing)                     if ref $thing eq 'ARRAY';
+	return _dump($$thing) if (ref $thing eq 'REF') || (ref $thing eq 'SCALAR');
+	return "$thing";
+}
+sub p (\[@$%&];%) {
+	my ($ref, %property) = @_;
+	my $text = "stub-DDP\n" . _dump($ref);
+	if (ref $property{output}) {
+		print {$property{output}} $text;
+	} else {
+		print STDOUT $text;
+	}
+	return $text;
+}
+sub np { return _dump($_[0]) }
+1;
+STUB
+	close $stub;
+
+	open my $sfh, '>', $script or die "cannot write $script: $!";
+	print {$sfh} <<"PROBE";
+use strict;
+use warnings;
+use lib '$lib_dir';
+use lib '$stub_dir'; # ahead of the real Data::Printer in \@INC
+use SimpleFlow qw(task);
+open my \$log, '>', '$log_name' or die;
+my \$t = task(cmd => qq{"\$^X" -e "print q{x} x $bytes"}, 'log.fh' => \$log, die => 0);
+close \$log;
+open my \$c, '>', '$capture_len' or die;
+print {\$c} length \$t->{stdout};
+close \$c;
+PROBE
+	close $sfh;
+	system(qq{$PERL "$script" > "$terminal_out"}) == 0
+		or die "the old-Data::Printer probe failed to run";
+
+	# the probe must have got as far as recording the capture length, or the
+	# size assertions below would be measuring nothing
+	my $recorded = do { open my $rfh, '<', $capture_len or die; local $/; <$rfh> };
+	is($recorded, $bytes, 'the full capture is still available on the result (and the probe ran)');
+
+	my $printed = do { open my $tfh, '<', $terminal_out or die; local $/; <$tfh> };
+	# without this the test would pass on the unfixed module wherever the
+	# installed Data::Printer happens to honour string_max itself
+	like($printed, qr/stub-DDP/, 'the printer that ignores string_max is the one that ran');
+	like($printed, qr/\Q(...skipping\E \d+ \Qchars...)\E/,
+		'the clipped field says how much was dropped');
+	cmp_ok(length $printed, '>', 0,      'the record is printed to the terminal at all');
+	cmp_ok(length $printed, '<', $bytes, 'but the terminal does not receive the whole capture');
+	cmp_ok(-s $log_name,    '>', 0,      'the record is written to the log at all');
+	cmp_ok(-s $log_name,    '<', $bytes, 'but the log does not receive the whole capture either');
+};
 
 done_testing();

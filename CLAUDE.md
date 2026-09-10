@@ -8,16 +8,16 @@ not this one.
 
 ## Never hand-edit the generated files
 
-Four things in this repo are generated from `README.md` by `perl md2pod.pl`:
+Three things in this repo are generated from `README.md` by `perl md2pod.pl`:
 
 - `read.me.pod`
 - the POD block in `lib/SimpleFlow.pm` after the `1;` line — `md2pod.pl`
   truncates the file at `1;` and re-appends the POD, so anything written into
   that block by hand is destroyed on the next run
-- `Changes`, built from the `# Changes` section of `README.md` and checked
-  with `Test::CPAN::Changes`
 - the `SimpleFlow-0.*/` directories and `SimpleFlow-0.*.tar.gz` tarballs, which
   are `dzil build` output
+
+`Changes` is **not** one of them any more — see the next section.
 
 Documentation changes go into `README.md`, and then `perl md2pod.pl` is run.
 Never `Edit`, `Write`, `sed -i` or patch the generated copies directly, and
@@ -28,14 +28,51 @@ than editing it. `backup.pm` is a stale copy of the 0.13 module kept out of the
 distribution by `MANIFEST.SKIP`; it is not the module, is not loaded by
 anything, and must not be edited or read as authoritative.
 
-### Release notes are the maintainer's prose
+## Editing `Changes`
 
-The `# Changes` section of `README.md` is hand-written release notes. Do not
-add, reword or reorder an entry there, not even for work Claude just did, and
-not even when asked to "update the changelog" as part of a larger task. When a
-change would warrant a release note, say so in the reply and leave the wording
-to the maintainer. Everything else in `README.md` is ordinary documentation and
-is editable in the normal way.
+Claude may edit `Changes`, and a release note belongs there. The prohibition
+that stood here — the notes were the `# Changes` section of `README.md` and
+Claude was to leave their wording to the maintainer — was lifted by the
+maintainer on 2026-09-07. What replaces it is a shape requirement, because
+`Changes` is now the only copy of the notes and is parsed by CPAN and PAUSE:
+
+- Add a release by prepending a section to `Changes` itself, never to
+  `README.md`, and never re-word a release that has already shipped.
+- A version line is `<version> <date>`, as in `0.17 2026-09-07`, optionally
+  followed by a note in parentheses as the shipped releases do
+  (`0.16 2026-08-28 (Claude Opus 5 helped)`). A release with no date, or a
+  version that does not parse, fails `changes_file_ok()` in `md2pod.pl` rather
+  than at upload time. Verify a hand-edit by loading the file through
+  `CPAN::Changes` before trusting it, or by running `perl md2pod.pl`.
+- Entries group under ` [Bracketed headings]` — one leading space, then the
+  heading — and bullets are ` - text` with continuation lines indented five
+  spaces. The 0.16 and 0.13 sections are the model to follow.
+- Check what has actually shipped before opening a new section. Unlike some
+  sibling projects, `$VERSION` in `lib/SimpleFlow.pm` has been the *released*
+  version here: on 2026-09-07 it read `0.16` and `SimpleFlow-0.16.tar.gz` had
+  been uploaded and tested by CPAN testers. Work done on top of a shipped
+  version needs a new section and a `$VERSION` bump to match it, and the two
+  must agree — `dist.ini` takes the version from the module, so a `Changes`
+  section for a version the module does not claim would ship under the wrong
+  number.
+
+Everything in `README.md` is ordinary documentation and is editable in the
+normal way. It no longer carries the notes: the `# Changes` heading there is a
+two-line pointer to the `Changes` file, and the prose that used to sit under it
+lives in `Changes`.
+
+### It is edited directly, and it is the only copy
+
+Up to 0.16 the notes were a build artefact. `md2pod.pl` rewrote `Changes` on
+every run from the `# Changes` section of `README.md`, so the same prose lived
+in two markups and README.md was the source. That half of the generator is
+gone; `md2pod.pl` only *checks* the file now, with `changes_file_ok()`, which
+parses it the way CPAN and PAUSE do. Two consequences worth keeping in mind:
+
+- There is no longer a second copy to fall back on, and nothing regenerates it.
+  A bad edit is a lost release note, so verify the parse.
+- The notes are no longer duplicated into `read.me.pod` and the module's POD,
+  which is where CPAN readers used to find them; they read `Changes` instead.
 
 ## Everything runs under `use warnings FATAL => 'all'`
 
