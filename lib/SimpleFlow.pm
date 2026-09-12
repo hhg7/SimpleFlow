@@ -11,7 +11,7 @@ use feature 'say';
 
 # Quoted, not the bare number: a numeric version is stringified through %g,
 # so 0.20 would become "0.2" and compare as older than "0.15" on CPAN.
-our $VERSION = '0.161';
+our $VERSION = '0.162';
 
 use Capture::Tiny 'capture';
 use Cwd 'getcwd';
@@ -541,7 +541,7 @@ SimpleFlow - easy, simple workflow manager (and logger); for keeping track of an
 
 =head1 VERSION
 
-version 0.161
+version 0.162
 
 =head1 DESCRIPTION
 

@@ -432,12 +432,27 @@ subtest 'quiet => 1' => sub {
 	# back empty too and give the game away.
 	my %captured;
 	my %log_size;
-	# The command's own "hush" does not land in %captured and never did: file
+	# The command's own output does not land in %captured and never did: file
 	# descriptor 1 still points at the real terminal while STDOUT is an
 	# in-memory handle, so Capture::Tiny inside task() has no fd to dup and the
 	# child writes straight past the redirect (the same limitation block 11
 	# describes). The outer capture here is what keeps that off the terminal;
 	# $escaped is asserted on below so the arrangement cannot rot silently.
+	#
+	# The record can escape the same way, on Data::Printer before 1.x. The
+	# module says use DDP {output => 'STDOUT'}, and 0.38 binds that property to
+	# the STDOUT glob as it parses it -- at import, long before the
+	# local *STDOUT below -- while 1.002001 resolves the handle at print time.
+	# On 0.38 the record is therefore written to the real file descriptor 1 and
+	# joins the command's output here. A CPAN tester on perl 5.20.0 with
+	# Data::Printer 0.38 reported exactly that against 0.161 on 2026-09-12,
+	# where this block asserted $escaped eq 'hushhush'; both versions were run
+	# here to confirm the cause. What is asserted below is how many times the
+	# command ran, not that nothing else escaped.
+	#
+	# The command prints uc q{hush} rather than q{HUSH} so that the sentinel
+	# cannot appear in an escaped record: the record quotes the command it ran,
+	# and any literal the command printed would then be counted twice.
 	my $escaped = '';
 	for my $quiet (0, 1) {
 		my $log_name = "$dir/quiet-$quiet.log";
@@ -447,15 +462,16 @@ subtest 'quiet => 1' => sub {
 			my ($out) = capture {
 				local *STDOUT;
 				open STDOUT, '>', \$captured{$quiet} or die;
-				task(cmd => perl_cmd('print q{hush}'), 'log.fh' => $log, quiet => $quiet);
+				task(cmd => perl_cmd('print uc q{hush}'), 'log.fh' => $log, quiet => $quiet);
 			};
 			$escaped .= $out;
 		}
 		close $log;
 		$log_size{$quiet} = -s $log_name;
 	}
-	is($escaped, 'hushhush', "the command's own output goes past the in-memory STDOUT, both times");
-	cmp_ok(length $captured{0}, '>', 0, 'without quiet the record reaches STDOUT');
+	my $sentinels = () = $escaped =~ m/HUSH/g;
+	is($sentinels, 2, "the command's own output goes past the in-memory STDOUT, both times");
+	cmp_ok(length $captured{0}, '>', 0, 'without quiet the chatter reaches STDOUT');
 	is($captured{1}, '',                'with quiet => 1 nothing reaches STDOUT');
 	cmp_ok($log_size{1}, '>', 0,        'the log is still written when quiet => 1');
 	cmp_ok($log_size{1}, '>=', $log_size{0} - 8,

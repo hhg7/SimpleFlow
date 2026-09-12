@@ -1,6 +1,27 @@
 Revision history for SimpleFlow
 
 
+0.162 2026-09-12 (Claude Opus 5 helped)
+
+ [Tests]
+
+ - **Block 14 of `t/02.fixes.t` failed on Data::Printer before 1.x.** A CPAN
+     tester on perl 5.20.0 with Data::Printer 0.38 reported it against 0.161.
+     The block redirects STDOUT to an in-memory handle to check that
+     `quiet => 1` silences the terminal, and asserted that exactly the
+     command's own output -- and nothing else -- escaped that redirect to the
+     real file descriptor 1. On Data::Printer 0.38 the record escapes too:
+     `use DDP {output => 'STDOUT'}` binds the handle as the property is
+     parsed, at import, while 1.002001 resolves it at print time, so a later
+     `local *STDOUT` cannot reach the older release. The block now counts how
+     many times the command ran instead of demanding that nothing else
+     escaped, and its command prints an upper-cased sentinel so that the
+     record, which quotes the command it ran, cannot be counted as a second
+     copy. Confirmed against Data::Printer 0.38 and 1.002001, on perl 5.10.1,
+     5.12.5 and 5.44.0. No module behaviour changed, and nothing about
+     `quiet` was wrong: on every version the record goes to the terminal
+     unless `quiet => 1` and to the log either way.
+
 0.161 2026-09-07 (Claude Opus 5 helped)
 
  [Fixed]
