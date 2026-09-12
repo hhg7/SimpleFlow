@@ -1,0 +1,17 @@
+# Build artifacts
+^backup.pm$
+^md2pod.pl$
+
+# Makemaker generated files
+^Makefile$
+^MYMETA\.
+
+# Release archives
+^SimpleFlow.*\.tar\.gz$
+
+# Not part of the distribution
+^CLAUDE\.md$
+
+# Author-only helper, like md2pod.pl above: it hardcodes a perlbrew layout,
+# uses modern perl, and tests lib/ rather than anything shipped.
+^test\.all\.perls\.pl$
