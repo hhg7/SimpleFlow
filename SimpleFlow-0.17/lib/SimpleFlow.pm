@@ -11,13 +11,14 @@ use feature 'say';
 
 # Quoted, not the bare number: a numeric version is stringified through %g,
 # so 0.20 would become "0.2" and compare as older than "0.15" on CPAN.
-our $VERSION = '0.162';
+our $VERSION = '0.17';
 
 use Capture::Tiny 'capture';
 use Cwd 'getcwd';
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Exporter 'import';
+use File::Spec;
 use List::Util qw(max min);
 use POSIX ();
 use Scalar::Util 'openhandle';
@@ -276,6 +277,7 @@ sub task {
 		'overwrite',   # bool
 		'quiet',       # bool; suppress the terminal record, but never the log or STDERR
 		'stale',       # bool; also re-run when an input is newer than an output
+		'stdin',       # 'devnull' (the default) or 'inherit'; what the command sees on fd 0
 		'timeout',     # whole seconds of wall clock; 0 means no limit
 	);
 	my @bad_args = grep { my $key = $_; not grep {$_ eq $key} @defined_args} keys %{ $args };
@@ -334,6 +336,12 @@ sub task {
 			die '"timeout" is not supported on MSWin32: it needs fork() and POSIX process groups to kill the command';
 		}
 	}
+	if (defined $args->{stdin}) {
+		if (($args->{stdin} ne 'devnull') && ($args->{stdin} ne 'inherit')) {
+			p $args;
+			die "\"stdin\" must be \"devnull\" (the default) or \"inherit\", not \"$args->{stdin}\"";
+		}
+	}
 
 	# Both file lists are normalised, and their names validated, before any
 	# filetest touches them.
@@ -366,6 +374,7 @@ sub task {
 	$r{overwrite} = $args->{overwrite} // 0; # by default, false
 	$r{quiet}     = $args->{quiet}     // 0; # by default, false
 	$r{stale}     = $args->{stale}     // 0; # by default, false
+	$r{stdin}     = $args->{stdin}     // 'devnull'; # by default, the null device
 	$r{timeout}   = $args->{timeout}   // 0; # by default, no limit
 	# These belong to a command that actually ran, but they are seeded on
 	# every path so that the record has the same shape after a skip or a dry
@@ -442,16 +451,59 @@ sub task {
 		}
 		return \%r;
 	}
+	# Capture::Tiny redirects fd 1 and fd 2 and nothing else, so before 0.17
+	# the command inherited the caller's fd 0. A command that prompts -- "rm"
+	# over a write-protected file, "cp -i", git asking for a password -- then
+	# wrote its question into the captured stderr, where nobody could see it,
+	# and blocked on the terminal for an answer that was never coming. With
+	# no "timeout" that hang was unbounded; with one, the record blamed the
+	# clock (timed.out => 1, signal => 9) for what was really a question.
+	# fd 0 therefore points at the null device for the duration of the run,
+	# which covers the _run_with_timeout path as well: its child inherits
+	# fd 0 across the fork and exec just as system()'s does.
+	#
+	# STDIN itself is reopened rather than localised. The child inherits the
+	# descriptor, and "open local *STDIN" attaches the glob to some other fd
+	# while fd 0 goes on pointing at the terminal; reopening STDIN closes
+	# fd 0, so the new open reclaims it as the lowest free descriptor.
+	my $saved_stdin;
+	if ($r{stdin} eq 'devnull') {
+		# a caller may legitimately have closed STDIN: there is then nothing
+		# to save, and it is closed again below rather than restored
+		if (defined fileno STDIN) {
+			open $saved_stdin, '<&', \*STDIN
+				or die "cannot save STDIN before running \"$cmd_string\": $!";
+		}
+		open STDIN, '<', File::Spec->devnull
+			or die 'cannot reopen STDIN on ' . File::Spec->devnull . ": $!";
+	}
 	my $t0 = Time::HiRes::time();
 	my @run_result;
-	($r{stdout}, $r{stderr}, @run_result) = capture {
-		return _run_with_timeout($args->{cmd}, $r{timeout}) if $r{timeout};
-		my $raw_status = ($cmd_ref eq 'ARRAY')
-			? system(@{ $args->{cmd} })
-			: system($args->{cmd});
-		return ($raw_status, 0);
+	# Wrapped in eval so that fd 0 is restored even when the run dies --
+	# _run_with_timeout dies if fork() fails -- rather than leaving a caller
+	# that traps the exception without its stdin.
+	my $run_ok = eval {
+		($r{stdout}, $r{stderr}, @run_result) = capture {
+			return _run_with_timeout($args->{cmd}, $r{timeout}) if $r{timeout};
+			my $raw_status = ($cmd_ref eq 'ARRAY')
+				? system(@{ $args->{cmd} })
+				: system($args->{cmd});
+			return ($raw_status, 0);
+		};
+		1;
 	};
+	my $run_error = $@;
 	my $t1 = Time::HiRes::time();
+	if ($r{stdin} eq 'devnull') {
+		if (defined $saved_stdin) {
+			open STDIN, '<&', $saved_stdin
+				or die "cannot restore STDIN after running \"$cmd_string\": $!";
+			close $saved_stdin;
+		} else {
+			close STDIN; # it was closed when we were called; leave it that way
+		}
+	}
+	die $run_error if not $run_ok;
 	$r{duration} = $t1-$t0;
 	my ($status, $timed_out) = @run_result;
 	$r{'timed.out'} = $timed_out ? 1 : 0;
@@ -541,7 +593,7 @@ SimpleFlow - easy, simple workflow manager (and logger); for keeping track of an
 
 =head1 VERSION
 
-version 0.162
+version 0.17
 
 =head1 DESCRIPTION
 
@@ -704,6 +756,12 @@ flat key/value list or a single hash reference; the only required key is C<cmd>.
   <td>Also re-run when an input file is newer than an output file. See Out-of-date outputs.</td>
 </tr>
 <tr>
+  <td><code>stdin</code></td>
+  <td><code>'devnull'</code>/<code>'inherit'</code></td>
+  <td><code>'devnull'</code></td>
+  <td>What the command sees on its standard input. The default is the null device; <code>'inherit'</code> hands it the caller's own. See Standard input.</td>
+</tr>
+<tr>
   <td><code>timeout</code></td>
   <td>whole seconds</td>
   <td><code>0</code></td>
@@ -784,7 +842,7 @@ C<0>, C<stdout> and C<stderr> are C<''>, C<duration> is C<0>).
   <td>Captured output, with trailing whitespace stripped.</td>
 </tr>
 <tr>
-  <td><code>die</code>, <code>dry.run</code>, <code>overwrite</code>, <code>note</code>, <code>quiet</code>, <code>stale</code>, <code>timeout</code></td>
+  <td><code>die</code>, <code>dry.run</code>, <code>overwrite</code>, <code>note</code>, <code>quiet</code>, <code>stale</code>, <code>stdin</code>, <code>timeout</code></td>
   <td>The (defaulted) argument values used.</td>
 </tr>
 <tr>
@@ -839,7 +897,7 @@ replace it.
 =head2 Out-of-date outputs
 
 Existence alone is a weak test. If an input file has been edited since the
-output was built, the output is stale even though it is present — and by
+output was built, the output is stale even though it is present, and by
 default C<task> will still skip the step, exactly as earlier versions did.
 
 Pass C<< stale =E<gt> 1 >> to get the rule C<make> and C<snakemake> use: re-run whenever
@@ -904,6 +962,36 @@ that is a lot of scrollback, so C<< quiet =E<gt> 1 >> suppresses it:
 The log filehandle still receives the full record, and error messages still go
 to C<STDERR>: asking for less noise is not the same as asking to be kept in the
 dark about a failure.
+
+=head2 Standard input
+
+The command is run with its standard input on the null device, so a command
+that stops to ask a question gets an immediate end-of-file and carries on
+instead of waiting for an answer:
+
+ my $t = task(cmd => 'rm -r some/tree');   # "remove write-protected file?"
+
+This matters because C<task> captures the command's output. A prompt is written
+to standard error, which has been redirected into the capture, so nothing
+reaches the terminal: before 0.17 such a command hung with no visible reason —
+for ever with no C<timeout>, and with one it was killed and reported as
+C<timed.out>, blaming the clock for what was really an unanswered question.
+
+Shell redirection inside the command is unaffected, since that is the shell's
+business rather than C<task>'s:
+
+ my $t = task(cmd => 'sort < unsorted.txt > sorted.txt');
+
+To hand the command the caller's own standard input instead — a pipeline step
+that really does read the data your script was given — ask for it:
+
+ my $t = task(cmd => 'sort > sorted.txt', stdin => 'inherit');
+
+C<'inherit'> is the behaviour of 0.162 and earlier, and comes with its hazards:
+the command consumes input your own script can then no longer read, and a
+command that prompts will hang exactly as it used to. The caller's standard
+input is saved and restored around every run either way, including when the
+command dies, and a caller that had closed it keeps it closed.
 
 =head2 Dry runs
 

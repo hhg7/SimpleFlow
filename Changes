@@ -1,6 +1,79 @@
 Revision history for SimpleFlow
 
 
+0.17 2026-09-14 (Claude Opus 5 helped)
+
+ [Fixed]
+
+ - **A command that prompted hung for ever.** `Capture::Tiny::capture`
+     redirects file descriptors 1 and 2 and nothing else, so the command
+     inherited the caller's descriptor 0. A command that stops to ask a
+     question — `rm` over a write-protected file, `cp -i`, `git` asking for
+     credentials — wrote its prompt into the captured stderr, where nobody
+     could see it, and then blocked on the terminal waiting for an answer the
+     user did not know was wanted. Nothing was printed and, with `timeout` at
+     its default of 0, nothing ever returned; with a `timeout` set the process
+     group was killed and the record then said `timed.out => 1, signal => 9`,
+     blaming the clock for what was really an unanswered question. The command
+     now runs with descriptor 0 on the null device. Both execution paths were
+     affected and both are fixed: the `timeout` path forks and execs, and its
+     child inherited descriptor 0 across the fork just as `system()`'s did.
+     Found while debugging a pipeline that hung on `rm -r` over a read-only
+     file.
+
+ [Added]
+
+ - **`stdin`**: `'devnull'` (the default) or `'inherit'`, saying what the
+     command sees on its standard input. `'inherit'` restores the behaviour of
+     0.162 and earlier for a step that really does read the data the calling
+     script was given, with the hazards that implies: it consumes input the
+     caller can then no longer read, and a command that prompts hangs exactly
+     as it used to. The caller's standard input is saved and restored around
+     every run either way — including when the run dies, so a caller that traps
+     the exception is not left without it — and a caller that had closed it
+     keeps it closed.
+
+ [Changed]
+
+ - The result record carries `stdin`, the resolved value of that option.
+ - `File::Spec` (core) is now a dependency, for the name of the null device:
+     `/dev/null` on Unix, `nul` on Windows.
+ - Callers relying on the old behaviour are affected: a command that read the
+     calling script's standard input now reads end-of-file instead, and
+     succeeds while doing nothing. `stdin => 'inherit'` is the one-word repair.
+
+ [Packaging]
+
+ - **`SECURITY.md`**, giving an address to report a vulnerability to privately
+     and saying what is in scope. SimpleFlow runs the command it is given, so a
+     `cmd` string built out of untrusted data is a shell injection in the
+     *calling* program; the array-ref form of `cmd` runs without a shell and is
+     the way to avoid that.
+ - **`CONTRIBUTING.md`** now ships too. Both files are gathered by `[@Basic]`
+     without a `dist.ini` entry, and both are what the CPANTS experimental
+     metrics `has_security_doc`, `security_doc_contains_contact` and
+     `has_contributing_doc` look for. Checked by running the contact half of
+     `Module::CPANTS::SiteKwalitee::Security` over the built tarball: the
+     address it extracts is `dec986@gmail.com`.
+ - **`autodie` is no longer a prerequisite.** The only file that ever loaded it
+     is `md2pod.pl`, which `MANIFEST.SKIP` keeps out of the distribution, so
+     every installer was being asked for a module the shipped code never loads.
+     `Exporter` is declared instead, since the module does load it.
+ - **The test-only prerequisites are declared as such.** `Test::More`,
+     `Test::Exception` and `File::Temp` are used by `t/` and by nothing that is
+     installed, so they moved from `requires` to `test_requires`. `Test::More`
+     is pinned at 0.96 for the first time: every test file uses `subtest`,
+     which arrived in Test::Simple 0.94, and perl 5.10.1 shipped 0.92 — a
+     smoker with nothing beyond core could not have run the suite at all, and
+     nothing said so. The `Makefile.PL` folds `TEST_REQUIRES` back into
+     `PREREQ_PM` on ExtUtils::MakeMaker older than 6.63_03, so 5.10's own
+     toolchain still sees them.
+ - **`cover_db/`, `cover.sh` and `dzil.sh` no longer ship.** The committed
+     Devel::Cover report is stale by design — it predates `t/02.fixes.t` — and
+     was 39 files of HTML in the tarball; the two scripts are author-only, like
+     `md2pod.pl`. The distribution is 17 files, and passes its own suite (60
+     tests) when the tests are run inside the built tree.
+
 0.162 2026-09-12 (Claude Opus 5 helped)
 
  [Tests]

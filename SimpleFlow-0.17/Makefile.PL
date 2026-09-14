@@ -22,16 +22,19 @@ my %WriteMakefileArgs = (
     "Data::Printer" => 0,
     "Devel::Confess" => 0,
     "Devel::Size" => 0,
-    "File::Temp" => 0,
+    "Exporter" => 0,
+    "File::Spec" => 0,
     "List::Util" => 0,
     "POSIX" => 0,
     "Scalar::Util" => 0,
-    "Test::Exception" => 0,
-    "Test::More" => 0,
-    "Time::HiRes" => 0,
-    "autodie" => 0
+    "Time::HiRes" => 0
   },
-  "VERSION" => "0.162",
+  "TEST_REQUIRES" => {
+    "File::Temp" => 0,
+    "Test::Exception" => 0,
+    "Test::More" => "0.96"
+  },
+  "VERSION" => "0.17",
   "test" => {
     "TESTS" => "t/*.t"
   }
@@ -44,14 +47,15 @@ my %FallbackPrereqs = (
   "Data::Printer" => 0,
   "Devel::Confess" => 0,
   "Devel::Size" => 0,
+  "Exporter" => 0,
+  "File::Spec" => 0,
   "File::Temp" => 0,
   "List::Util" => 0,
   "POSIX" => 0,
   "Scalar::Util" => 0,
   "Test::Exception" => 0,
-  "Test::More" => 0,
-  "Time::HiRes" => 0,
-  "autodie" => 0
+  "Test::More" => "0.96",
+  "Time::HiRes" => 0
 );
 
 

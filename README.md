@@ -84,6 +84,7 @@ flat key/value list or a single hash reference; the only required key is `cmd`.
 | `overwrite`    | bool             | `0`     | If false and all `output.files` already exist, the command is skipped. Set true to always run. |
 | `quiet`        | bool             | `0`     | Suppress the record printed to the terminal. The log and error messages on `STDERR` are unaffected. See [Quiet runs](#quiet-runs). |
 | `stale`        | bool             | `0`     | Also re-run when an input file is newer than an output file. See [Out-of-date outputs](#out-of-date-outputs). |
+| `stdin`        | `'devnull'`/`'inherit'` | `'devnull'` | What the command sees on its standard input. The default is the null device; `'inherit'` hands it the caller's own. See [Standard input](#standard-input). |
 | `timeout`      | whole seconds    | `0`     | Kill the command if it runs longer than this. `0` means no limit. See [Timeouts](#timeouts). |
 
 Passing an unrecognised key, an undefined or empty filename, a `cmd` that is
@@ -113,7 +114,7 @@ execution-only fields simply hold their empty values (`exit` and `signal` are
 | `timed.out`        | `1` if the command was killed for exceeding its `timeout`, else `0`. |
 | `out.of.date`      | `1` if `stale` was set and an input was newer than an output, else `0`. |
 | `stdout`, `stderr` | Captured output, with trailing whitespace stripped. |
-| `die`, `dry.run`, `overwrite`, `note`, `quiet`, `stale`, `timeout` | The (defaulted) argument values used. |
+| `die`, `dry.run`, `overwrite`, `note`, `quiet`, `stale`, `stdin`, `timeout` | The (defaulted) argument values used. |
 | `output.files`     | Array ref of the output files (a scalar argument, or an `output.file`, is normalised to a one-element array). |
 | `output.file.size` | Hash of `filename => size in bytes` for the outputs. |
 | `input.files`      | Array ref of the input files, normalised the same way (present only if you passed `input.files` or `input.file`). |
@@ -145,7 +146,7 @@ replace it.
 ## Out-of-date outputs
 
 Existence alone is a weak test. If an input file has been edited since the
-output was built, the output is stale even though it is present — and by
+output was built, the output is stale even though it is present, and by
 default `task` will still skip the step, exactly as earlier versions did.
 
 Pass `stale => 1` to get the rule `make` and `snakemake` use: re-run whenever
@@ -210,6 +211,36 @@ that is a lot of scrollback, so `quiet => 1` suppresses it:
 The log filehandle still receives the full record, and error messages still go
 to `STDERR`: asking for less noise is not the same as asking to be kept in the
 dark about a failure.
+
+## Standard input
+
+The command is run with its standard input on the null device, so a command
+that stops to ask a question gets an immediate end-of-file and carries on
+instead of waiting for an answer:
+
+    my $t = task(cmd => 'rm -r some/tree');   # "remove write-protected file?"
+
+This matters because `task` captures the command's output. A prompt is written
+to standard error, which has been redirected into the capture, so nothing
+reaches the terminal: before 0.17 such a command hung with no visible reason —
+for ever with no `timeout`, and with one it was killed and reported as
+`timed.out`, blaming the clock for what was really an unanswered question.
+
+Shell redirection inside the command is unaffected, since that is the shell's
+business rather than `task`'s:
+
+    my $t = task(cmd => 'sort < unsorted.txt > sorted.txt');
+
+To hand the command the caller's own standard input instead — a pipeline step
+that really does read the data your script was given — ask for it:
+
+    my $t = task(cmd => 'sort > sorted.txt', stdin => 'inherit');
+
+`'inherit'` is the behaviour of 0.162 and earlier, and comes with its hazards:
+the command consumes input your own script can then no longer read, and a
+command that prompts will hang exactly as it used to. The caller's standard
+input is saved and restored around every run either way, including when the
+command dies, and a caller that had closed it keeps it closed.
 
 ## Dry runs
 
