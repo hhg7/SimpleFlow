@@ -11,14 +11,14 @@ use feature 'say';
 
 # Quoted, not the bare number: a numeric version is stringified through %g,
 # so 0.20 would become "0.2" and compare as older than "0.15" on CPAN.
-our $VERSION = '0.17';
+our $VERSION = '0.18';
 
-use Capture::Tiny 'capture';
 use Cwd 'getcwd';
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Exporter 'import';
 use File::Spec;
+use File::Temp ();
 use List::Util qw(max min);
 use POSIX ();
 use Scalar::Util 'openhandle';
@@ -112,15 +112,23 @@ sub _autoflush {
 # clipped, so $t->{stdout} still has the full capture. The mark is
 # Data::Printer's own wording, so the output does not change on the versions
 # that were already capping it.
+#
+# The copy is built field by field, and an over-long field is never copied in
+# full: "%clipped = %$r" followed by substr, as 0.17 did it, copied the whole
+# of stdout and stderr first, and perls before 5.20 have no copy-on-write to
+# make that cheap: on perl-5.10.1, clipping a record holding a 100 MB stdout
+# raised peak RSS from 205 MB to 303 MB, for text that was then thrown away.
 sub _clipped {
 	my $r = shift;
-	my %clipped = %$r; # shallow: only the top-level fields are ever this long
-	foreach my $key (grep {ref $clipped{$_} eq ''} keys %clipped) {
-		next unless defined $clipped{$key}; # length undef is fatal here
-		my $dropped = length($clipped{$key}) - $STRING_MAX_CAP;
-		next if $dropped <= 0;
-		$clipped{$key} = substr($clipped{$key}, 0, $STRING_MAX_CAP)
-			. "(...skipping $dropped chars...)";
+	my %clipped; # shallow: only the top-level fields are ever this long
+	foreach my $key (keys %$r) {
+		my $value = \$r->{$key};
+		my $dropped = ((defined $$value) && (ref $$value eq '')) # length undef is fatal here
+			? length($$value) - $STRING_MAX_CAP
+			: 0;
+		$clipped{$key} = ($dropped > 0)
+			? substr($$value, 0, $STRING_MAX_CAP) . "(...skipping $dropped chars...)"
+			: $$value;
 	}
 	return \%clipped;
 }
@@ -216,6 +224,10 @@ sub _run_with_timeout {
 	die "fork() failed, so \"timeout\" cannot be honoured: $!" if not defined $pid;
 	if ($pid == 0) { # the child
 		setpgrp(0, 0); # lead a new process group, so the kill below reaches the whole pipeline
+		# A failed exec warns "Can't exec", which "warnings FATAL" turns into
+		# a die -- and a die here unwinds into the caller's evals as a second
+		# copy of the caller's program. See the same guard in task().
+		no warnings 'exec';
 		my $exec_ok = (ref $cmd eq 'ARRAY')
 			? exec({ $cmd->[0] } @{ $cmd })
 			: exec($cmd);
@@ -234,13 +246,135 @@ sub _run_with_timeout {
 		1;
 	} or do {
 		my $error = $@;
+		my $reaped_status = $?; # holds the child's status if waitpid above had already returned
 		alarm 0;
 		die $error if not $timed_out; # something other than the timeout went wrong
-		kill 'KILL', -$pid; # negative pid: the process group, not just the shell
-		waitpid $pid, 0;
-		$status = $?;
+		# The alarm can land after waitpid has reaped the child but before
+		# "alarm 0" cancels it. The child then finished within its limit, a
+		# second waitpid would return -1 and overwrite its real status, and
+		# its pid is free for the kernel to hand to an unrelated process. So
+		# the group is killed only if the child has not already been reaped.
+		my $waited = waitpid $pid, POSIX::WNOHANG();
+		if ($waited == -1) { # already reaped by the waitpid inside the eval
+			$timed_out = 0;
+			$status    = $reaped_status;
+		} elsif ($waited == $pid) { # exited of its own accord at the deadline
+			$timed_out = 0;
+			$status    = $?;
+		} else { # 0: still running
+			kill 'KILL', -$pid; # negative pid: the process group, not just the shell
+			waitpid $pid, 0;
+			$status = $?;
+		}
 	};
 	return ($status, $timed_out);
+}
+
+# Flush a handle's buffer without IO::Handle: setting $| true flushes at once,
+# and its previous value is put back so the caller's autoflush is untouched.
+sub _flush {
+	my $fh = shift;
+	my $previously_selected = select $fh;
+	my $autoflush = $|;
+	$| = 1;
+	$| = $autoflush;
+	select $previously_selected;
+	return;
+}
+
+# Read the whole of $fh into the scalar $$into, through the translation
+# layers the caller's own handle had. read() appends into the target buffer,
+# and the first call asks for the whole file, so the text is allocated once,
+# in the record, and never copied.
+sub _slurp_into {
+	my ($fh, $layers, $into) = @_;
+	seek $fh, 0, 0 or die "cannot rewind a capture file: $!";
+	binmode $fh; # :raw, then only the layers that translate text
+	# Only these: a caller's STDOUT may be an in-memory "scalar" handle, and
+	# :unix, :perlio and the like are the plumbing a temporary file already has.
+	my @translating = grep { /^(?:crlf|utf8|encoding\(.*\))$/ } @$layers;
+	binmode $fh, ':' . join(':', @translating) if scalar @translating > 0;
+	$$into = '';
+	# A length of 0 would read nothing at all, and a child the command put in
+	# the background may still be writing to a file that measured empty; the
+	# 64 KiB floor keeps the loop reading to the real end.
+	my $chunk = max(-s $fh, 65536);
+	while (1) {
+		my $got = read $fh, $$into, $chunk, length $$into;
+		die "cannot read a capture file: $!" if not defined $got;
+		last if $got == 0;
+	}
+	return;
+}
+
+# Run $code with file descriptors 1 and 2 on temporary files, and read what
+# landed there into $$stdout and $$stderr. Returns what $code returned.
+#
+# This replaces Capture::Tiny, which 0.17 and earlier used, for memory: it
+# slurps each capture into a lexical and hands it back through several list
+# copies, and perls before 5.20 have no copy-on-write to make those free.
+# Measured with a command printing 100 MB on perl-5.10.1: task() peaked at
+# 498 MB RSS and took 0.53 s with Capture::Tiny 0.50, and peaks at 108 MB
+# and takes 0.17 s with this.
+#
+# The redirection is done on the descriptors, with POSIX::dup2, not on the
+# STDOUT and STDERR globs, since descriptors are what a child inherits. So a
+# caller that has pointed STDOUT at an in-memory scalar still has the
+# command's output captured; under Capture::Tiny it went straight to the
+# real fd 1.
+sub _capture {
+	my ($stdout, $stderr, $code) = @_;
+	# A caller may have closed 0, 1 or 2. Each hole is plugged with the null
+	# device, so that the temporary files below cannot land on a standard
+	# descriptor and be closed out from under us when it is restored.
+	# POSIX::open returns the lowest free descriptor, which is $fd itself,
+	# since every lower one is already open by the time the loop reaches it.
+	my @plugs;
+	foreach my $fd (0 .. 2) {
+		my $probe = POSIX::dup($fd);
+		if (defined $probe) {
+			POSIX::close($probe);
+			next;
+		}
+		my $plug = POSIX::open(File::Spec->devnull, POSIX::O_RDWR());
+		die "cannot plug closed descriptor $fd with " . File::Spec->devnull . ": $!" if not defined $plug;
+		push @plugs, $plug;
+	}
+	my %layers = (
+		1 => [PerlIO::get_layers(\*STDOUT, output => 1)],
+		2 => [PerlIO::get_layers(\*STDERR, output => 1)],
+	);
+	my %file = (1 => File::Temp->new, 2 => File::Temp->new);
+	# Anything the caller printed but perl has not yet written goes to the
+	# terminal now, not into the command's capture.
+	_flush(\*STDOUT);
+	_flush(\*STDERR);
+	my %saved;
+	my @result;
+	my $ok = eval {
+		foreach my $fd (1, 2) {
+			$saved{$fd} = POSIX::dup($fd);
+			die "cannot save descriptor $fd: $!" if not defined $saved{$fd};
+			defined POSIX::dup2(fileno $file{$fd}, $fd)
+				or die "cannot redirect descriptor $fd to a capture file: $!";
+		}
+		@result = $code->();
+		1;
+	};
+	my $error = $@;
+	# as Capture::Tiny did, anything perl itself printed while redirected
+	# belongs to the capture
+	_flush(\*STDOUT);
+	_flush(\*STDERR);
+	foreach my $fd (sort keys %saved) {
+		POSIX::dup2($saved{$fd}, $fd);
+		POSIX::close($saved{$fd});
+	}
+	POSIX::close($_) foreach @plugs;
+	die $error if not $ok;
+	_slurp_into($file{1}, $layers{1}, $stdout);
+	_slurp_into($file{2}, $layers{2}, $stderr);
+	return @result;
 }
 
 sub task {
@@ -422,7 +556,6 @@ sub task {
 	}
 	$r{'out.of.date'} = $is_stale;
 
-	my %output_file_size = map {$_ => -s $_} @output_files;
 	if (
 			(!$r{overwrite})   &&
 			(!$is_stale)       &&
@@ -432,7 +565,7 @@ sub task {
 		$r{done} = 'before';
 		$r{'will.do'} = 'no';
 		say colored(['black on_green'], "\"$cmd_string\"\n") . ' has been done before' unless $r{quiet};
-		$r{'output.file.size'} = \%output_file_size;
+		$r{'output.file.size'} = { map {$_ => -s $_} @output_files };
 		_report(\%r, $args->{'log.fh'}, $r{quiet});
 		return \%r;
 	} else {
@@ -451,8 +584,9 @@ sub task {
 		}
 		return \%r;
 	}
-	# Capture::Tiny redirects fd 1 and fd 2 and nothing else, so before 0.17
-	# the command inherited the caller's fd 0. A command that prompts -- "rm"
+	# _capture redirects fd 1 and fd 2 and nothing else, as Capture::Tiny did
+	# before it, so before 0.17 the command inherited the caller's fd 0. A
+	# command that prompts -- "rm"
 	# over a write-protected file, "cp -i", git asking for a password -- then
 	# wrote its question into the captured stderr, where nobody could see it,
 	# and blocked on the terminal for an answer that was never coming. With
@@ -483,13 +617,23 @@ sub task {
 	# _run_with_timeout dies if fork() fails -- rather than leaving a caller
 	# that traps the exception without its stdin.
 	my $run_ok = eval {
-		($r{stdout}, $r{stderr}, @run_result) = capture {
+		@run_result = _capture(\$r{stdout}, \$r{stderr}, sub {
 			return _run_with_timeout($args->{cmd}, $r{timeout}) if $r{timeout};
+			# system() forks before it execs, and when the exec fails its
+			# child warns "Can't exec" -- which "warnings FATAL" makes a die,
+			# in the forked child, inside this eval. Until 0.18 that child
+			# unwound out of task() and ran the rest of the caller's program
+			# as a second copy, while the parent read the copy's exit status:
+			# a command that did not exist was reported as exit 0, "done".
+			no warnings 'exec';
+			# The block form never uses the shell, even for a one-element list.
+			# Until 0.18 plain system(@list) was used, and perl hands a list of
+			# one to the shell: cmd => ['echo hi; rm x'] ran both commands.
 			my $raw_status = ($cmd_ref eq 'ARRAY')
-				? system(@{ $args->{cmd} })
+				? system({ $args->{cmd}[0] } @{ $args->{cmd} })
 				: system($args->{cmd});
 			return ($raw_status, 0);
-		};
+		});
 		1;
 	};
 	my $run_error = $@;
@@ -523,8 +667,16 @@ sub task {
 		$r{signal}   = $status & 127; # FIX: taken from raw status, not from $exit
 		$r{'exit'}   = $status >> 8;
 	}
+	# Remove trailing whitespace. This walks back from the end rather than
+	# using s/\s+$//, as 0.17 did, which scans forward from the start of the
+	# capture and, on a perl with copy-on-write, copies the whole of it first.
+	# Measured on a 100 MB stdout: 0.09 s on perl-5.10.1, and on 5.44.0 0.13 s
+	# and peak RSS 107 MB -> 205 MB, to remove one newline. The walk costs
+	# only the whitespace it removes.
 	foreach my $std ('stderr', 'stdout') {
-		$r{$std} =~ s/\s+$//; # remove trailing whitespace/newline
+		my $end = length $r{$std};
+		$end-- while ($end > 0) && (substr($r{$std}, $end - 1, 1) =~ /\s/);
+		substr($r{$std}, $end) = '';
 	}
 	$r{done} = 'now';
 	$r{'will.do'} = 'done';
@@ -554,7 +706,7 @@ sub task {
 			say STDERR 'those above files should have been made but are missing';
 		}
 	}
-	%output_file_size = map {$_ => -s $_} @output_files;
+	my %output_file_size = map {$_ => -s $_} @output_files;
 	$r{'output.file.size'} = \%output_file_size;
 	my @files_with_zero_size = grep { ($output_file_size{$_} // 0) == 0 } @output_files;
 	if (scalar @files_with_zero_size > 0) {
@@ -593,7 +745,7 @@ SimpleFlow - easy, simple workflow manager (and logger); for keeping track of an
 
 =head1 VERSION
 
-version 0.17
+version 0.18
 
 =head1 DESCRIPTION
 
@@ -823,7 +975,7 @@ C<0>, C<stdout> and C<stderr> are C<''>, C<duration> is C<0>).
 </tr>
 <tr>
   <td><code>exit</code></td>
-  <td>Exit code of the command (<code>-1</code> if it could not be launched).</td>
+  <td>Exit code of the command: <code>-1</code> if it could not be launched, or <code>127</code> if it could not be launched under a <code>timeout</code> (the forked child has no other way to say so).</td>
 </tr>
 <tr>
   <td><code>signal</code></td>
@@ -948,6 +1100,10 @@ with a space, a quote, or a C<$> in it is passed through untouched instead of
 being re-parsed by the shell. You lose shell features (C<< E<gt> >>, C<|>, C<*>, C<&&>) in
 exchange; use the string form when you want them.
 
+This holds for a one-element array ref too: C<< cmd =E<gt> ['gzip -9 x'] >> looks for a
+program literally named C<gzip -9 x>, and fails, rather than handing the string
+to the shell as Perl's own C<system> does with a list of one.
+
 =head2 Quiet runs
 
 Every C<task> prints its record to the terminal. Over a hundred-step pipeline
@@ -1037,18 +1193,19 @@ Core/runtime modules used by SimpleFlow:
 
 =over
 
-=item * L<Capture::Tiny> captures C<stdout>/C<stderr>
-
 =item * L<Data::Printer> (C<DDP>) pretty result/record printing
 
 =item * L<Devel::Confess> better backtraces on death
 
-=item * C<List::Util>, C<Scalar::Util>, C<Time::HiRes>, C<Cwd>, C<POSIX> core utilities
+=item * C<List::Util>, C<Scalar::Util>, C<Time::HiRes>, C<Cwd>, C<POSIX>, C<File::Spec>,
+C<File::Temp> core utilities; C<stdout> and C<stderr> are captured with
+C<POSIX::dup2> onto temporary files
 
 =back
 
 The test suite additionally uses C<Test::More> and
-L<Test::Exception>.
+L<Test::Exception>; it captures
+output with its own small helper, C<t/lib/CaptureStd.pm>.
 
 =head1 Changes
 

@@ -1,6 +1,87 @@
 Revision history for SimpleFlow
 
 
+0.18 2026-09-24 (Claude Opus 5 helped)
+
+ [Fixed]
+
+ - **A command that could not be launched was reported as a success, and the
+     rest of the calling program ran twice.** `system()` forks and then execs;
+     when the exec fails, its child warns "Can't exec", which the module's
+     `use warnings FATAL => 'all'` turned into a die *in that forked child*.
+     The die unwound out of `task()` into the caller's program, which then ran
+     on as a second copy, while the parent was handed the copy's exit status.
+     `task(cmd => 'no-such-program', die => 0)` came back `exit => 0`,
+     `will.do => 'done'`, and every later step ran twice. The `timeout` path
+     had the same defect in its own fork. A command that cannot be launched is
+     now `exit => -1` (`127` under a `timeout`) and `FAILED`. A string with a
+     shell metacharacter in it was never affected, since the shell launches
+     the program and reports `127` itself.
+ - **A one-element array-ref `cmd` went through the shell.** An array ref is
+     documented as run without a shell, but `system(@list)` hands a list of one
+     to the shell, so `cmd => ['echo hi; rm x']` ran both commands. The array
+     form now always runs the named program directly.
+ - **A command finishing at the moment its `timeout` fired could be reported
+     as timed out, with `exit => -1`.** If the alarm arrived after the child had
+     been reaped but before it was cancelled, the group was killed anyway and a
+     second `waitpid` overwrote the real status. The group is now killed only
+     if the child has not already been reaped. The window is a few
+     instructions wide, and has no test.
+
+ [Performance]
+
+ - **`stdout` and `stderr` are captured without `Capture::Tiny`.** It slurped
+     each capture into a lexical and returned it through several list copies,
+     which perls before 5.20 do not share: a `task()` whose command printed
+     100 MB peaked at 498 MB RSS and took 0.53 s on perl 5.10.1. `task()` now
+     points descriptors 1 and 2 at temporary files itself, with `POSIX::dup2`,
+     and reads each file straight into the record: 108 MB and 0.17 s. The
+     capture is read back through the caller's own `STDOUT` and `STDERR`
+     layers, as `Capture::Tiny` did, so a caller that set
+     `:encoding(UTF-8)` still gets characters; standard descriptors the
+     caller had closed are plugged with the null device for the run and
+     closed again after.
+ - **Trailing whitespace is stripped by walking back from the end.** The
+     regex used before scanned the whole of `stdout` from the start, and on a
+     perl with copy-on-write copied it first: on a 100 MB capture, 0.13 s and
+     peak RSS from 107 MB to 205 MB on perl 5.44.0. End to end, a `task()`
+     producing 100 MB of `stdout` went from 306 MB peak RSS and 0.30 s to
+     111 MB and 0.12 s on 5.44.0.
+ - **Printing the record no longer copies the captured output.** The clipped
+     copy made for printing copied every field in full before clipping it,
+     which perls before 5.20 do not share: on perl 5.10.1 that raised peak RSS
+     from 205 MB to 303 MB for a 100 MB `stdout`.
+
+ [Changed]
+
+ - **A caller whose `STDOUT` is an in-memory handle now has the command's
+     output captured.** `Capture::Tiny` redirected the `STDOUT` glob, and a
+     glob opened on a scalar has no descriptor, so the command wrote past it
+     onto the real descriptor 1 — the terminal — and the record's `stdout`
+     came back empty. The redirect is now on the descriptor, which is what
+     the command inherits. A caller that relied on that output reaching the
+     terminal will now find it in `stdout` instead.
+
+ [Packaging]
+
+ - **`Capture::Tiny` is no longer a prerequisite at all.** The module
+     captures on its own descriptors, and the tests use `t/lib/CaptureStd.pm`,
+     a 46-line `capture {}` with the same calling convention that reopens
+     the `STDOUT` and `STDERR` globs — deliberately not the module's own
+     mechanism, so a bug in one cannot hide the same bug in the other.
+     `File::Temp`, which is core, is now a runtime prerequisite.
+
+ [Tests]
+
+ - **`t/03.fixes.t`**, one block per defect above except the race, and one
+     for the in-memory `STDOUT`, each confirmed to fail against 0.17 first;
+     and two covering the new capture's handling of closed descriptors and of
+     output layers, which pass against 0.17 as well, since the point is that
+     nothing changed there.
+ - Block 14 of `t/02.fixes.t` (`quiet => 1`) used to assert that the
+     command's output escaped an in-memory `STDOUT`; it now asserts that the
+     output is in the record.
+
 0.17 2026-09-14 (Claude Opus 5 helped)
 
  [Fixed]

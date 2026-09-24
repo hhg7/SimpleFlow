@@ -6,7 +6,10 @@ require 5.010;
 use feature 'say';
 use Test::More;
 use Test::Exception;
-use Capture::Tiny 'capture';
+use File::Spec;
+use FindBin ();
+use lib File::Spec->catdir($FindBin::Bin, 'lib'); # t/lib: CaptureStd, the tests' capture {}
+use CaptureStd 'capture';
 use File::Temp 'tempfile';
 use SimpleFlow qw(task say2);
 

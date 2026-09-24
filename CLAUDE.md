@@ -173,9 +173,15 @@ not something a test run here will catch.
 ## Tests
 
 `t/01.t` is the feature smoke test, `t/02.fixes.t` the regression suite for the
-0.16 defects and the options added with them, and `t/more.coverage.t` reaches
-the error branches the other two do not. All three pass under
-`prove -Ilib t/`.
+0.16 defects and the options added with them, `t/03.fixes.t` the regression
+suite for the 0.18 defects, and `t/more.coverage.t` reaches the error branches
+the others do not. All four pass under `prove -Ilib t/`.
+
+The tests capture output with `capture {}` from `t/lib/CaptureStd.pm`, not
+`Capture::Tiny`, which is no longer a prerequisite of any kind. It reopens the
+`STDOUT`/`STDERR` globs rather than using the module's `POSIX::dup2` approach,
+on purpose: keep the two mechanisms different, so a bug in the module's
+capture cannot be masked by the same bug in the harness.
 
 ### A regression test must be shown to fail before the fix
 
@@ -252,8 +258,8 @@ Under `/home/con/perl5/perlbrew/perls/`: `perl-5.44.0` (the default),
 `perl-5.42.3`, `perl-5.12.5`, `perl-5.10.1`, and `5.44.0-quadmath`. The module
 is pure Perl, so NV width is irrelevant; the *version* spread is what matters.
 
-The prereqs (`Capture::Tiny`, `Data::Printer`, `Devel::Confess`,
-`Test::Exception`) are installed on `perl-5.10.1` and `perl-5.12.5` but **not**
+The prereqs (`Data::Printer`, `Devel::Confess`, `Test::Exception`) are
+installed on `perl-5.10.1` and `perl-5.12.5` but **not**
 on `perl-5.42.3`, so 5.42.3 cannot run the suite as it stands. Check the oldest
 supported perl for anything touching `lib/SimpleFlow.pm`:
 
