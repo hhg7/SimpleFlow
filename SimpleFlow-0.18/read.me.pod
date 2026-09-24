@@ -6,7 +6,7 @@ SimpleFlow - easy, simple workflow manager (and logger); for keeping track of an
 
 =head1 VERSION
 
-version 0.17
+version 0.18
 
 =head1 DESCRIPTION
 
@@ -236,7 +236,7 @@ C<0>, C<stdout> and C<stderr> are C<''>, C<duration> is C<0>).
 </tr>
 <tr>
   <td><code>exit</code></td>
-  <td>Exit code of the command (<code>-1</code> if it could not be launched).</td>
+  <td>Exit code of the command: <code>-1</code> if it could not be launched, or <code>127</code> if it could not be launched under a <code>timeout</code> (the forked child has no other way to say so).</td>
 </tr>
 <tr>
   <td><code>signal</code></td>
@@ -361,6 +361,10 @@ with a space, a quote, or a C<$> in it is passed through untouched instead of
 being re-parsed by the shell. You lose shell features (C<< E<gt> >>, C<|>, C<*>, C<&&>) in
 exchange; use the string form when you want them.
 
+This holds for a one-element array ref too: C<< cmd =E<gt> ['gzip -9 x'] >> looks for a
+program literally named C<gzip -9 x>, and fails, rather than handing the string
+to the shell as Perl's own C<system> does with a list of one.
+
 =head2 Quiet runs
 
 Every C<task> prints its record to the terminal. Over a hundred-step pipeline
@@ -450,18 +454,19 @@ Core/runtime modules used by SimpleFlow:
 
 =over
 
-=item * L<Capture::Tiny> captures C<stdout>/C<stderr>
-
 =item * L<Data::Printer> (C<DDP>) pretty result/record printing
 
 =item * L<Devel::Confess> better backtraces on death
 
-=item * C<List::Util>, C<Scalar::Util>, C<Time::HiRes>, C<Cwd>, C<POSIX> core utilities
+=item * C<List::Util>, C<Scalar::Util>, C<Time::HiRes>, C<Cwd>, C<POSIX>, C<File::Spec>,
+C<File::Temp> core utilities; C<stdout> and C<stderr> are captured with
+C<POSIX::dup2> onto temporary files
 
 =back
 
 The test suite additionally uses C<Test::More> and
-L<Test::Exception>.
+L<Test::Exception>; it captures
+output with its own small helper, C<t/lib/CaptureStd.pm>.
 
 =head1 Changes
 

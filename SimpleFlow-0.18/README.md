@@ -109,7 +109,7 @@ execution-only fields simply hold their empty values (`exit` and `signal` are
 | `done`             | `"now"` (just ran), `"before"` (skipped, outputs already existed), or `"not yet"` (dry run). |
 | `will.do`          | `"done"`, `"no"` (skipped), `"no: dry run"`, or `"FAILED"`. `"FAILED"` is set whenever the command exited non-zero, timed out, or left a declared output file missing — **whether or not `die` is set**. |
 | `duration`         | Wall-clock seconds the command took (`0` for skips/dry runs). |
-| `exit`             | Exit code of the command (`-1` if it could not be launched). |
+| `exit`             | Exit code of the command: `-1` if it could not be launched, or `127` if it could not be launched under a `timeout` (the forked child has no other way to say so). |
 | `signal`           | Signal number if the command process was killed by a signal, else `0`. Always `0` on Windows (no POSIX signals). |
 | `timed.out`        | `1` if the command was killed for exceeding its `timeout`, else `0`. |
 | `out.of.date`      | `1` if `stale` was set and an input was newer than an output, else `0`. |
@@ -196,6 +196,10 @@ This is the form to reach for when an argument comes from data — a filename
 with a space, a quote, or a `$` in it is passed through untouched instead of
 being re-parsed by the shell. You lose shell features (`>`, `|`, `*`, `&&`) in
 exchange; use the string form when you want them.
+
+This holds for a one-element array ref too: `cmd => ['gzip -9 x']` looks for a
+program literally named `gzip -9 x`, and fails, rather than handing the string
+to the shell as Perl's own `system` does with a list of one.
 
 ## Quiet runs
 
@@ -284,13 +288,15 @@ are traceable. The filehandle must be open, or `say2` dies.
 
 Core/runtime modules used by SimpleFlow:
 
-- [`Capture::Tiny`](https://metacpan.org/pod/Capture::Tiny) captures `stdout`/`stderr`
 - [`Data::Printer`](https://metacpan.org/pod/Data::Printer) (`DDP`) pretty result/record printing
 - [`Devel::Confess`](https://metacpan.org/pod/Devel::Confess) better backtraces on death
-- `List::Util`, `Scalar::Util`, `Time::HiRes`, `Cwd`, `POSIX` core utilities
+- `List::Util`, `Scalar::Util`, `Time::HiRes`, `Cwd`, `POSIX`, `File::Spec`,
+  `File::Temp` core utilities; `stdout` and `stderr` are captured with
+  `POSIX::dup2` onto temporary files
 
 The test suite additionally uses `Test::More` and
-[`Test::Exception`](https://metacpan.org/pod/Test::Exception).
+[`Test::Exception`](https://metacpan.org/pod/Test::Exception); it captures
+output with its own small helper, `t/lib/CaptureStd.pm`.
 
 # Changes
 

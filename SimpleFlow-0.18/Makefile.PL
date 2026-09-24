@@ -17,24 +17,23 @@ my %WriteMakefileArgs = (
   "MIN_PERL_VERSION" => "5.010",
   "NAME" => "SimpleFlow",
   "PREREQ_PM" => {
-    "Capture::Tiny" => 0,
     "Cwd" => 0,
     "Data::Printer" => 0,
     "Devel::Confess" => 0,
     "Devel::Size" => 0,
     "Exporter" => 0,
     "File::Spec" => 0,
+    "File::Temp" => 0,
     "List::Util" => 0,
     "POSIX" => 0,
     "Scalar::Util" => 0,
     "Time::HiRes" => 0
   },
   "TEST_REQUIRES" => {
-    "File::Temp" => 0,
     "Test::Exception" => 0,
     "Test::More" => "0.96"
   },
-  "VERSION" => "0.17",
+  "VERSION" => "0.18",
   "test" => {
     "TESTS" => "t/*.t"
   }
@@ -42,7 +41,6 @@ my %WriteMakefileArgs = (
 
 
 my %FallbackPrereqs = (
-  "Capture::Tiny" => 0,
   "Cwd" => 0,
   "Data::Printer" => 0,
   "Devel::Confess" => 0,

@@ -33,9 +33,11 @@ require 5.010;
 use feature 'say';
 use Test::More;
 use Test::Exception;
-use Capture::Tiny 'capture';
-use File::Temp qw(tempfile tempdir);
 use File::Spec;
+use FindBin ();
+use lib File::Spec->catdir($FindBin::Bin, 'lib'); # t/lib: CaptureStd, the tests' capture {}
+use CaptureStd 'capture';
+use File::Temp qw(tempfile tempdir);
 use SimpleFlow qw(task say2);
 
 # Portability setup consistent with 01.t
@@ -339,11 +341,11 @@ subtest '$VERSION is a quoted string' => sub {
 # chatty command had its entire stdout echoed to the terminal and the log.
 subtest 'a large capture is not echoed in full' => sub {
 	# This has to run in a subprocess with REAL file descriptors. Redirecting
-	# this process's STDOUT to an in-memory scalar defeats Capture::Tiny --
-	# it cannot dup a handle that has no fd -- so the child's output never gets
-	# captured, the record comes out small, and the test would pass on any
-	# module at all. A subprocess writing to an actual file reproduces the
-	# original flood exactly.
+	# this process's STDOUT to an in-memory scalar defeated Capture::Tiny,
+	# which task() used up to 0.17 -- it cannot dup a handle that has no fd --
+	# so the child's output never got captured, the record came out small,
+	# and the test would pass on any module at all. A subprocess writing to an
+	# actual file reproduces the original flood exactly.
 	my $bytes        = 200_000;
 	my $log_name     = "$dir/big.log";
 	my $terminal_out = "$dir/big.terminal";
@@ -437,45 +439,46 @@ subtest 'quiet => 1' => sub {
 	# back empty too and give the game away.
 	my %captured;
 	my %log_size;
+	my %command_stdout;
 	# The command's own output does not land in %captured and never did: file
-	# descriptor 1 still points at the real terminal while STDOUT is an
-	# in-memory handle, so Capture::Tiny inside task() has no fd to dup and the
-	# child writes straight past the redirect (the same limitation block 11
-	# describes). The outer capture here is what keeps that off the terminal;
-	# $escaped is asserted on below so the arrangement cannot rot silently.
+	# descriptor 1 is not the in-memory STDOUT. Up to 0.17 it did not land in
+	# the record either -- Capture::Tiny inside task() had no fd to dup and the
+	# child wrote straight past it, onto the real fd 1 -- and this block
+	# counted the command's output among what escaped to prove it ran. Since
+	# 0.18 task() redirects fd 1 itself, so the command's output is in the
+	# record, and that is what is asserted on instead.
 	#
-	# The record can escape the same way, on Data::Printer before 1.x. The
-	# module says use DDP {output => 'STDOUT'}, and 0.38 binds that property to
-	# the STDOUT glob as it parses it -- at import, long before the
+	# The record can escape past the in-memory STDOUT, on Data::Printer before
+	# 1.x. The module says use DDP {output => 'STDOUT'}, and 0.38 binds that
+	# property to the STDOUT glob as it parses it -- at import, long before the
 	# local *STDOUT below -- while 1.002001 resolves the handle at print time.
-	# On 0.38 the record is therefore written to the real file descriptor 1 and
-	# joins the command's output here. A CPAN tester on perl 5.20.0 with
+	# On 0.38 the record is therefore written to the real file descriptor 1,
+	# where the outer capture catches it. A CPAN tester on perl 5.20.0 with
 	# Data::Printer 0.38 reported exactly that against 0.161 on 2026-09-12,
 	# where this block asserted $escaped eq 'hushhush'; both versions were run
-	# here to confirm the cause. What is asserted below is how many times the
-	# command ran, not that nothing else escaped.
+	# here to confirm the cause. The outer capture is what keeps an escaped
+	# record off the terminal; nothing is asserted about what escaped.
 	#
 	# The command prints uc q{hush} rather than q{HUSH} so that the sentinel
-	# cannot appear in an escaped record: the record quotes the command it ran,
-	# and any literal the command printed would then be counted twice.
-	my $escaped = '';
+	# cannot be mistaken for the command line, which the record also quotes.
 	for my $quiet (0, 1) {
 		my $log_name = "$dir/quiet-$quiet.log";
 		open my $log, '>', $log_name or die;
 		$captured{$quiet} = '';
 		{
-			my ($out) = capture {
+			capture {
 				local *STDOUT;
 				open STDOUT, '>', \$captured{$quiet} or die;
-				task(cmd => perl_cmd('print uc q{hush}'), 'log.fh' => $log, quiet => $quiet);
+				my $t = task(cmd => perl_cmd('print uc q{hush}'), 'log.fh' => $log, quiet => $quiet);
+				$command_stdout{$quiet} = $t->{stdout};
 			};
-			$escaped .= $out;
 		}
 		close $log;
 		$log_size{$quiet} = -s $log_name;
 	}
-	my $sentinels = () = $escaped =~ m/HUSH/g;
-	is($sentinels, 2, "the command's own output goes past the in-memory STDOUT, both times");
+	# positive sentinel: the command ran, both times, and was captured
+	is($command_stdout{0}, 'HUSH', "the command ran and its output is in the record, without quiet");
+	is($command_stdout{1}, 'HUSH', "the command ran and its output is in the record, with quiet => 1");
 	cmp_ok(length $captured{0}, '>', 0, 'without quiet the chatter reaches STDOUT');
 	is($captured{1}, '',                'with quiet => 1 nothing reaches STDOUT');
 	cmp_ok($log_size{1}, '>', 0,        'the log is still written when quiet => 1');
@@ -698,7 +701,7 @@ sub probe_read {
 }
 
 # --- 18. the command does not inherit the caller's stdin -------------------
-# Capture::Tiny redirects fd 1 and fd 2 and nothing else, so until 0.17 the
+# Capture::Tiny redirected fd 1 and fd 2 and nothing else, so until 0.17 the
 # command ran with the caller's fd 0. A command that prompts -- "rm" over a
 # write-protected file, "cp -i", git asking for a password -- wrote its
 # question into the captured stderr, where nobody could see it, and then
