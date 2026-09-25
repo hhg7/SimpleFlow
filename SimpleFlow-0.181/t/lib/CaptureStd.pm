@@ -17,8 +17,9 @@ package CaptureStd;
 # A bug in the module's capture therefore cannot be hidden by the same bug in
 # the harness measuring it.
 #
-# Only what the tests need is here: no tee, no merge, no layers (every
-# capture compared is ASCII), no tied or closed standard handles.
+# Only what the tests need is here: no tee, no merge, no layers beyond
+# undoing MSWin32's CR LF (every capture compared is ASCII), no tied or closed
+# standard handles.
 #
 use strict;
 use warnings FATAL => 'all';
@@ -44,7 +45,14 @@ sub _slurp {
 	seek $fh, 0, 0 or die "cannot rewind a capture file: $!";
 	local $/;
 	my $text = <$fh>;
-	return defined $text ? $text : '';
+	return '' if not defined $text;
+	# On MSWin32 the standard handles carry :crlf, so "\n" reaches the file as
+	# CR LF, and File::Temp opens the file in binary mode, so it is read back
+	# as CR LF. Undo it, as reading through the handle's own layers would:
+	# 0.18's t/01.t failed on Strawberry Perl 5.42.2 comparing a captured
+	# line with "...\r\n" against the same line with "\n".
+	$text =~ s/\015\012/\012/g if $^O eq 'MSWin32';
+	return $text;
 }
 
 sub capture (&) {

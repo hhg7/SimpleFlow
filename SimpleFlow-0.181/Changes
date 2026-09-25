@@ -1,6 +1,21 @@
 Revision history for SimpleFlow
 
 
+0.181 2026-09-25 (Claude Opus 5 helped)
+
+ [Tests]
+
+ - **The 0.18 suite failed on MSWin32; the module itself is unchanged.**
+     `t/lib/CaptureStd.pm` read its capture files in binary mode, so every
+     line captured from a `:crlf` handle ended in CR LF, and `t/01.t`'s
+     `say2` comparison failed. `t/03.fixes.t` passed its child program and
+     the command under test to a fresh perl as arguments containing double
+     quotes, which `system(LIST)` on MSWin32 does not escape, so the child
+     never ran and blocks 1 and 3 failed. The child code now avoids double
+     quotes, the command goes through `%ENV`, and a missing command given as a
+     string, which MSWin32 retries through `cmd.exe`, is required only to
+     fail with a non-zero `exit` there rather than `-1`.
+
 0.18 2026-09-24 (Claude Opus 5 helped)
 
  [Fixed]
