@@ -22,6 +22,14 @@
 # emitting its own TAP. Blocks 5 and 6 do too, because they close or re-layer
 # this process's standard handles.
 #
+# Nothing handed to a child perl as an argument may contain a double quote.
+# On MSWin32 system(LIST) joins its arguments into one command line, wrapping
+# any with a space in double quotes but not escaping the quotes inside, so the
+# child receives a different program: 0.18's blocks 1 and 3 printed no
+# RETURNED line at all on Strawberry Perl 5.42.2. The child code uses qq{}
+# instead, and the command under test, which may itself be quoted, goes
+# through %ENV, which reaches the child verbatim.
+#
 
 use strict;
 use warnings FATAL => 'all';
@@ -48,22 +56,25 @@ my $NO_SUCH = "simpleflow-no-such-command-$$";
 # Run one task() in a child interpreter and return one hash per "RETURNED"
 # line printed after it. The child prints that line once, after task()
 # returns; a copy of the program that escaped from a fork prints it too, and
-# says which it is. @ARGV is: timeout, form ('list' or 'string'), the command.
+# says which it is. @ARGV is: timeout, form ('list' or 'string'); the command
+# is in $ENV{SIMPLEFLOW_TEST_CMD}, for the reason given in the header.
 #
 my $CHILD = <<'CODE';
 use strict; use warnings FATAL => 'all'; use SimpleFlow;
-my ($timeout, $form, @cmd) = @ARGV;
+my ($timeout, $form) = @ARGV;
+my $cmd = $ENV{SIMPLEFLOW_TEST_CMD};
 my $parent = $$;
-my $t = eval { task(cmd => ($form eq 'list' ? [@cmd] : $cmd[0]), die => 0,
+my $t = eval { task(cmd => ($form eq 'list' ? [$cmd] : $cmd), die => 0,
 	($timeout ? (timeout => $timeout) : ())) };
-print "\nRETURNED who=", ($$ == $parent ? 'parent' : 'escaped'),
+print qq{\nRETURNED who=}, ($$ == $parent ? 'parent' : 'escaped'),
 	' will.do=', ($t ? $t->{'will.do'} : 'died'),
 	' exit=', ($t ? $t->{'exit'} : 'none'),
-	' stdout=', ($t ? $t->{stdout} : ''), "\n";
+	' stdout=', ($t ? $t->{stdout} : ''), qq{\n};
 CODE
 sub run_child {
-	my ($timeout, $form, @cmd) = @_;
-	my ($out) = capture { system($^X, "-I$lib_dir", '-e', $CHILD, $timeout, $form, @cmd) };
+	my ($timeout, $form, $cmd) = @_;
+	local $ENV{SIMPLEFLOW_TEST_CMD} = $cmd;
+	my ($out) = capture { system($^X, "-I$lib_dir", '-e', $CHILD, $timeout, $form) };
 	return map { { /(\w[\w.]*)=(\S*)/g } } ($out =~ /^RETURNED (.*)$/mg);
 }
 
@@ -84,7 +95,16 @@ foreach my $form ('list', 'string') {
 			'no forked copy of the caller ran on after task() (0.17: one did)');
 		my ($parent) = grep { $_->{who} eq 'parent' } @returned;
 		is($parent->{'will.do'}, 'FAILED', 'will.do is FAILED (0.17: "done")');
-		is($parent->{'exit'},    -1,       'exit is -1, "could not be launched" (0.17: 0)');
+		# On MSWin32 a string whose direct spawn fails with ENOENT is retried
+		# through cmd.exe (win32.c, so that shell builtins work), and cmd.exe
+		# reports the missing program with a non-zero code of its own. That
+		# code has not been observed -- there is no Windows perl here -- so
+		# only its being non-zero is asserted.
+		if ($form eq 'string' && $^O eq 'MSWin32') {
+			isnt($parent->{'exit'}, 0, 'exit is non-zero, from cmd.exe (0.17: 0)');
+		} else {
+			is($parent->{'exit'},    -1,       'exit is -1, "could not be launched" (0.17: 0)');
+		}
 	};
 }
 
