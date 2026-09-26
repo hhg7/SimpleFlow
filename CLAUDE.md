@@ -91,7 +91,8 @@ of exactly this shape.
   comparison, not a size check. Default it (`($size{$_} // 0) == 0`) or test
   existence first.
 - **The result hash has the same keys on every return path.** `exit`, `signal`,
-  `stdout`, `stderr`, `timed.out`, `duration`, `will.do`, `done`,
+  `stdout`, `stderr`, `timed.out`, `duration`, `attempts`, `cpu.user`,
+  `cpu.system`, `start.time`, `failed.outputs`, `will.do`, `done`,
   `out.of.date` and the resolved options are seeded before the first `return`,
   so that a caller reading `$t->{'exit'}` after a skip or a dry run does not
   die. A new field that a command produces must be seeded with its empty value
@@ -174,8 +175,11 @@ not something a test run here will catch.
 
 `t/01.t` is the feature smoke test, `t/02.fixes.t` the regression suite for the
 0.16 defects and the options added with them, `t/03.fixes.t` the regression
-suite for the 0.18 defects, and `t/more.coverage.t` reaches the error branches
-the others do not. All four pass under `prove -Ilib t/`.
+suite for the 0.18 defects, `t/04.fixes.t` the regression suite for the 0.19
+defects, `t/05.features.t` the tests for the options added in 0.19,
+`t/06.pipeline.t` those for `parallel()` and `report()`, and
+`t/07.coverage.t` and `t/more.coverage.t` reach the branches the others do
+not. All eight pass under `prove -Ilib t/`.
 
 The tests capture output with `capture {}` from `t/lib/CaptureStd.pm`, not
 `Capture::Tiny`, which is no longer a prerequisite of any kind. It reopens the

@@ -294,6 +294,11 @@ for my $idx (0 .. $#$tables_ref) {
 	# HTMLTABLEPLACEHOLDER1 no longer matches inside HTMLTABLEPLACEHOLDER10.
 	$pod =~ s/HTMLTABLEPLACEHOLDER${idx}\b/$table_html/g;
 }
+# Markdown::To::POD writes a blank line inside a code block as a single
+# space, which podchecker warns about ("line containing nothing but
+# whitespace in paragraph"). Emptied, it splits the verbatim block in two,
+# which renders the same.
+$pod =~ s/^[ \t]+$//mg;
 
 my ($package, $version, $abstract) = module_identity('lib/SimpleFlow.pm');
 
