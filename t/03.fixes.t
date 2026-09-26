@@ -100,8 +100,15 @@ foreach my $form ('list', 'string') {
 		# reports the missing program with a non-zero code of its own. That
 		# code has not been observed -- there is no Windows perl here -- so
 		# only its being non-zero is asserted.
+		#
+		# A list is never retried through cmd.exe, and a failed spawn does not
+		# return -1 there either: win32.c's do_aspawn sets the status to
+		# 255 * 256 instead. The 0.181 report from a CPAN tester (Strawberry
+		# Perl 5.42.0, Windows Server 2012) got exactly that, exit 255.
 		if ($form eq 'string' && $^O eq 'MSWin32') {
 			isnt($parent->{'exit'}, 0, 'exit is non-zero, from cmd.exe (0.17: 0)');
+		} elsif ($^O eq 'MSWin32') {
+			is($parent->{'exit'},    255,      'exit is 255, from win32.c (0.17: 0)');
 		} else {
 			is($parent->{'exit'},    -1,       'exit is -1, "could not be launched" (0.17: 0)');
 		}

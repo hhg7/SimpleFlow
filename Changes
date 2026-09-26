@@ -1,6 +1,16 @@
 Revision history for SimpleFlow
 
 
+0.182 2026-09-26 (Claude Opus 5 helped)
+
+ [Tests]
+
+ - **The 0.181 suite failed one test on MSWin32; the module itself is
+     unchanged.** `t/03.fixes.t` expected a missing command given as a list to
+     come back `exit => -1`, but on MSWin32 a failed spawn of a list does not
+     make `system` return -1: win32.c's `do_aspawn` sets the status to
+     255 * 256, so `exit` is 255. The test now expects 255 there.
+
 0.181 2026-09-25 (Claude Opus 5 helped)
 
  [Tests]

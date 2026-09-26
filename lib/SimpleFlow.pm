@@ -11,7 +11,7 @@ use feature 'say';
 
 # Quoted, not the bare number: a numeric version is stringified through %g,
 # so 0.20 would become "0.2" and compare as older than "0.15" on CPAN.
-our $VERSION = '0.181';
+our $VERSION = '0.182';
 
 use Cwd 'getcwd';
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
