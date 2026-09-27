@@ -2039,7 +2039,7 @@ SimpleFlow - easy, simple workflow manager (and logger); for keeping track of an
 
 =head1 VERSION
 
-version 0.20
+version 0.191
 
 =head1 DESCRIPTION
 
@@ -2856,9 +2856,9 @@ C<wrapper> runs the command inside any other command, given as an array ref,
 such as C<['nice', '-n', '10']> or C<['env', 'LC_ALL=C']>.
 
 These nest, outermost first, as executor, container, conda environment,
-wrapper. A string C<cmd> is run by C</bin/sh -c> inside all of them, so it keeps
-its pipes and redirections. The record's C<wrapped.cmd> is what was actually
-run, and a dry run prints it.
+wrapper. A string C<cmd> is run by C</bin/sh -c> (C<cmd.exe /c> on MSWin32) inside
+all of them, so it keeps its pipes and redirections. The record's C<wrapped.cmd>
+is what was actually run, and a dry run prints it.
 
 =head2 Running without a shell
 

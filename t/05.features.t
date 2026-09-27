@@ -477,8 +477,11 @@ subtest 'on.success and on.failure are called with the record' => sub {
 
 # --- wrapper, container, conda.env, executor ---------------------------------
 subtest 'wrapper: the command runs inside the wrapper' => sub {
-	# a wrapper that says it ran, and then runs what it was given
-	my $wrapper = [$^X, '-e', q{print STDERR 'wrapped;'; exec {$ARGV[0]} @ARGV or die}];
+	# a wrapper that says it ran, and then runs what it was given. Not with
+	# exec: on MSWin32 that starts the command and ends the wrapper at once, so
+	# task() saw the wrapper finish before the command printed anything, and
+	# 0.19's stdout here was '' on a Strawberry Perl 5.42.0 smoker.
+	my $wrapper = [$^X, '-e', q{print STDERR 'wrapped;'; system {$ARGV[0]} @ARGV; exit $? >> 8}];
 	my ($t) = run_task(cmd => [$^X, '-e', q{print 'the command'}], wrapper => $wrapper, quiet => 1);
 	is($t->{stdout}, 'the command', 'the command ran');
 	is($t->{stderr}, 'wrapped;', 'inside the wrapper');

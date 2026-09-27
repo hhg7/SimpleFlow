@@ -21,6 +21,21 @@ Revision history for SimpleFlow
      fails against 0.19.
  - `t/04.fixes.t` and `t/05.features.t` no longer draw "Statement unlikely to
      be reached" from perl 5.16.
+ - Seven subtests failed on a Strawberry Perl 5.42.0 smoker; the module was
+     not at fault in any of them. `t/05.features.t` and `t/07.coverage.t`
+     handed a child perl code with a double quote in it, which MSWin32's
+     `system(LIST)` does not escape; `t/05.features.t`'s wrapper used `exec`,
+     which on MSWin32 ends the wrapper before the command has printed; and
+     `t/06.pipeline.t` ran `parallel()` with `jobs` above 1, which is refused
+     there by design. Those subtests now check the refusal instead, and the
+     tests' helpers refuse a double quote in a list `cmd` or `wrapper` on
+     every platform, so that mistake can no longer reach a Windows smoker
+     unseen.
+
+ [Documentation]
+
+ - A string `cmd` inside a wrapper is run by `cmd.exe /c` on MSWin32, not by
+     `/bin/sh -c` as the documentation said.
 
 0.19 2026-09-26 (Claude Opus 5.5 helped)
 

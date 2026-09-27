@@ -188,6 +188,17 @@ The tests capture output with `capture {}` from `t/lib/CaptureStd.pm`, not
 on purpose: keep the two mechanisms different, so a bug in the module's
 capture cannot be masked by the same bug in the harness.
 
+The `run_task` and `run_parallel` helpers in `t/05.features.t`,
+`t/06.pipeline.t` and `t/07.coverage.t` pass their arguments through
+`refuse_double_quotes` from `t/lib/NoDoubleQuote.pm` first. It dies on a
+double quote in any element of a list `cmd` or `wrapper`, which MSWin32's
+`system(LIST)` would garble, so that mistake fails here and not only on a
+Windows smoker; 0.19 shipped three such subtests. A new helper that hands
+commands to `task()` should do the same. The check cannot see the other
+MSWin32 trap that 0.19 fell into: `exec` in a child perl ends that process at
+once there and leaves the new program running on its own, so a test wrapper
+runs its command with `system` and exits with its status instead.
+
 ### A regression test must be shown to fail before the fix
 
 The only evidence that a regression test tests anything is that it failed
