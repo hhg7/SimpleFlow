@@ -1,6 +1,42 @@
 Revision history for SimpleFlow
 
 
+0.191 2026-09-27 (Claude Opus 5.5 helped)
+
+ [Fixed]
+
+ - **A signal sent just as the command started could be lost.** 0.19 passes a
+     TERM or HUP (and, under `timeout`, an INT or QUIT) to the command, but
+     only once its handlers were installed, which was after the exec had
+     succeeded. A signal that arrived in between went to the caller's handler
+     alone: the command was neither killed nor sent it, ran to its end, and
+     was reported as `done`. A CPAN smoker (perl 5.16.3 on Alpine) hit this
+     in `t/07.coverage.t`. Those signals are now blocked from before the fork
+     until the handlers are in place, and one that arrived meanwhile is then
+     delivered to them.
+
+ [Tests]
+
+ - `t/08.fixes.t` sends the signal inside that window deterministically, and
+     fails against 0.19.
+ - `t/04.fixes.t` and `t/05.features.t` no longer draw "Statement unlikely to
+     be reached" from perl 5.16.
+ - Seven subtests failed on a Strawberry Perl 5.42.0 smoker; the module was
+     not at fault in any of them. `t/05.features.t` and `t/07.coverage.t`
+     handed a child perl code with a double quote in it, which MSWin32's
+     `system(LIST)` does not escape; `t/05.features.t`'s wrapper used `exec`,
+     which on MSWin32 ends the wrapper before the command has printed; and
+     `t/06.pipeline.t` ran `parallel()` with `jobs` above 1, which is refused
+     there by design. Those subtests now check the refusal instead, and the
+     tests' helpers refuse a double quote in a list `cmd` or `wrapper` on
+     every platform, so that mistake can no longer reach a Windows smoker
+     unseen.
+
+ [Documentation]
+
+ - A string `cmd` inside a wrapper is run by `cmd.exe /c` on MSWin32, not by
+     `/bin/sh -c` as the documentation said.
+
 0.19 2026-09-26 (Claude Opus 5.5 helped)
 
  [Fixed]

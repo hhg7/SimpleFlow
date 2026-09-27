@@ -505,9 +505,9 @@ once. `threads` is also given to the command, wherever it runs, as
 such as `['nice', '-n', '10']` or `['env', 'LC_ALL=C']`.
 
 These nest, outermost first, as executor, container, conda environment,
-wrapper. A string `cmd` is run by `/bin/sh -c` inside all of them, so it keeps
-its pipes and redirections. The record's `wrapped.cmd` is what was actually
-run, and a dry run prints it.
+wrapper. A string `cmd` is run by `/bin/sh -c` (`cmd.exe /c` on MSWin32) inside
+all of them, so it keeps its pipes and redirections. The record's `wrapped.cmd`
+is what was actually run, and a dry run prints it.
 
 ## Running without a shell
 

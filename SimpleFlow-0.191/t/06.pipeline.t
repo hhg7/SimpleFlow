@@ -19,6 +19,7 @@ use File::Spec;
 use FindBin ();
 use lib File::Spec->catdir($FindBin::Bin, 'lib'); # t/lib: CaptureStd, the tests' capture {}
 use CaptureStd 'capture';
+use NoDoubleQuote 'refuse_double_quotes'; # t/lib: what MSWin32 would garble in a list cmd
 use File::Temp 'tempdir';
 use JSON::PP ();
 use POSIX ();
@@ -51,6 +52,7 @@ my $RENDEZVOUS = q{use File::Spec; my ($d, $me, $all) = @ARGV; open my $m, '>', 
 
 sub run_parallel {
 	my @args = @_;
+	refuse_double_quotes(@args);
 	my (@records, $error);
 	my ($out, $err) = capture {
 		@records = eval { parallel(@args) };
@@ -59,30 +61,51 @@ sub run_parallel {
 	return (\@records, $out, $err, $error);
 }
 
-subtest 'parallel: the steps run at the same time, and come back in order' => sub {
-	my $markers = File::Spec->catdir($dir, 'markers' . ++$n);
-	mkdir $markers or die;
-	my @tasks = map { { cmd => [$^X, '-e', $RENDEZVOUS, $markers, "m$_", 3], quiet => 1, note => "task $_" } } 1 .. 3;
-	my ($records, undef, undef, $error) = run_parallel(jobs => 3, tasks => \@tasks);
-	is($error, '', 'parallel() returned');
-	is(scalar @$records, 3, 'with a record for each task');
-	is_deeply([map { $_->{stdout} } @$records], [3, 3, 3], 'each saw all three running at once');
-	is_deeply([map { $_->{note} } @$records], ['task 1', 'task 2', 'task 3'], 'in the order given');
-	like($records->[0]{'source.file'}, qr/06\.pipeline\.t\z/, 'source.file is the caller of parallel()');
-};
+# parallel() refuses "jobs" above 1 on MSWin32, on purpose, so the subtests
+# that need it are skipped there and this one checks the refusal instead. 0.19
+# ran them anyway, and failed three subtests on a Strawberry Perl 5.42.0 smoker.
+my $NO_FORK = '"jobs" above 1 is refused on MSWin32, which has no real fork()';
+SKIP: {
+	skip 'only MSWin32 refuses "jobs" above 1', 1 if $^O ne 'MSWin32';
+	subtest 'parallel: "jobs" above 1 is refused on MSWin32, saying why' => sub {
+		my $out = fresh_path();
+		my ($records, undef, undef, $error) = run_parallel(jobs => 2,
+			tasks => [{ cmd => [$^X, '-e', q{open my $f, '>', $ARGV[0] or die}, $out], quiet => 1 }]);
+		like($error, qr/"jobs" above 1 is not supported on MSWin32: it needs a real fork\(\)/, 'parallel() died, saying why');
+		ok(!-e $out, 'before running any step');
+	};
+}
 
-subtest 'parallel: a failure stops new steps, lets the running ones finish, and dies' => sub {
-	my ($slow_out, $never) = (fresh_path(), fresh_path());
-	my @tasks = (
-		{ cmd => [$^X, '-e', 'exit 5'], quiet => 1 },
-		{ cmd => [$^X, '-e', q{sleep 1; open my $f, '>', $ARGV[0] or die}, $slow_out], 'output.file' => $slow_out, quiet => 1 },
-		{ cmd => [$^X, '-e', q{open my $f, '>', $ARGV[0] or die}, $never], 'output.file' => $never, quiet => 1 },
-	);
-	my (undef, undef, undef, $error) = run_parallel(jobs => 2, tasks => \@tasks);
-	like($error, qr/exited 5/, 'parallel() died with the failure');
-	ok(-e $slow_out, 'the step already running when it failed was finished');
-	ok(!-e $never, 'and the step not yet started was not');
-};
+SKIP: {
+	skip $NO_FORK, 1 if $^O eq 'MSWin32';
+	subtest 'parallel: the steps run at the same time, and come back in order' => sub {
+		my $markers = File::Spec->catdir($dir, 'markers' . ++$n);
+		mkdir $markers or die;
+		my @tasks = map { { cmd => [$^X, '-e', $RENDEZVOUS, $markers, "m$_", 3], quiet => 1, note => "task $_" } } 1 .. 3;
+		my ($records, undef, undef, $error) = run_parallel(jobs => 3, tasks => \@tasks);
+		is($error, '', 'parallel() returned');
+		is(scalar @$records, 3, 'with a record for each task');
+		is_deeply([map { $_->{stdout} } @$records], [3, 3, 3], 'each saw all three running at once');
+		is_deeply([map { $_->{note} } @$records], ['task 1', 'task 2', 'task 3'], 'in the order given');
+		like($records->[0]{'source.file'}, qr/06\.pipeline\.t\z/, 'source.file is the caller of parallel()');
+	};
+}
+
+SKIP: {
+	skip $NO_FORK, 1 if $^O eq 'MSWin32';
+	subtest 'parallel: a failure stops new steps, lets the running ones finish, and dies' => sub {
+		my ($slow_out, $never) = (fresh_path(), fresh_path());
+		my @tasks = (
+			{ cmd => [$^X, '-e', 'exit 5'], quiet => 1 },
+			{ cmd => [$^X, '-e', q{sleep 1; open my $f, '>', $ARGV[0] or die}, $slow_out], 'output.file' => $slow_out, quiet => 1 },
+			{ cmd => [$^X, '-e', q{open my $f, '>', $ARGV[0] or die}, $never], 'output.file' => $never, quiet => 1 },
+		);
+		my (undef, undef, undef, $error) = run_parallel(jobs => 2, tasks => \@tasks);
+		like($error, qr/exited 5/, 'parallel() died with the failure');
+		ok(-e $slow_out, 'the step already running when it failed was finished');
+		ok(!-e $never, 'and the step not yet started was not');
+	};
+}
 
 subtest 'parallel: keep.going runs every step, and then dies' => sub {
 	my $later = fresh_path();
@@ -96,12 +119,15 @@ subtest 'parallel: keep.going runs every step, and then dies' => sub {
 	like($error, qr/1 of 2 tasks failed/, 'saying how many');
 };
 
-subtest 'parallel: under die => 0 the failed records come back' => sub {
-	my @tasks = ({ cmd => [$^X, '-e', 'exit 5'], die => 0, quiet => 1 }, { cmd => [$^X, '-e', 'print 1'], quiet => 1 });
-	my ($records, undef, undef, $error) = run_parallel(jobs => 2, tasks => \@tasks);
-	is($error, '', 'parallel() returned');
-	is_deeply([map { $_->{'will.do'} } @$records], ['FAILED', 'done'], 'with both records');
-};
+SKIP: {
+	skip $NO_FORK, 1 if $^O eq 'MSWin32';
+	subtest 'parallel: under die => 0 the failed records come back' => sub {
+		my @tasks = ({ cmd => [$^X, '-e', 'exit 5'], die => 0, quiet => 1 }, { cmd => [$^X, '-e', 'print 1'], quiet => 1 });
+		my ($records, undef, undef, $error) = run_parallel(jobs => 2, tasks => \@tasks);
+		is($error, '', 'parallel() returned');
+		is_deeply([map { $_->{'will.do'} } @$records], ['FAILED', 'done'], 'with both records');
+	};
+}
 
 subtest 'parallel: bad arguments are refused' => sub {
 	foreach my $case ([[jobs => 0, tasks => []], qr/"jobs"/], [[jobs => 2], qr/"tasks"/],
