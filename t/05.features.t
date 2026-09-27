@@ -25,6 +25,7 @@ use File::Spec;
 use FindBin ();
 use lib File::Spec->catdir($FindBin::Bin, 'lib'); # t/lib: CaptureStd, the tests' capture {}
 use CaptureStd 'capture';
+use NoDoubleQuote 'refuse_double_quotes'; # t/lib: what MSWin32 would garble in a list cmd
 use File::Temp 'tempdir';
 use JSON::PP ();
 use POSIX ();
@@ -57,6 +58,7 @@ my $WRITE = q{open my $f, '>', $ARGV[0] or die; print $f (defined $ARGV[1] ? $AR
 # Run task() with the output captured, and return (record, stdout, stderr, error).
 sub run_task {
 	my @args = @_;
+	refuse_double_quotes(@args);
 	my ($t, $error);
 	my ($out, $err) = capture {
 		$t = eval { task(@args) };
@@ -211,7 +213,7 @@ SKIP: {
 # --- output.dir and output.dirs -----------------------------------------------
 subtest 'output.dir: a directory output is checked, skipped and moved aside' => sub {
 	my $out = File::Spec->catdir($dir, 'outdir' . ++$n);
-	my $make = q{mkdir $ARGV[0] or die; open my $f, '>', "$ARGV[0]/x" or die; print $f 'x'};
+	my $make = q{use File::Spec; mkdir $ARGV[0] or die; open my $f, '>', File::Spec->catfile($ARGV[0], 'x') or die; print $f 'x'};
 	my ($t) = run_task(cmd => [$^X, '-e', $make, $out], 'output.dir' => $out, quiet => 1);
 	is($t->{'will.do'}, 'done', 'the step that made the directory succeeded');
 	is_deeply($t->{'output.dirs'}, [$out], 'output.dir is folded into output.dirs');
@@ -323,8 +325,8 @@ SKIP: {
 			no warnings 'exec';
 			exec($^X, "-I$lib_dir", '-MSimpleFlow', '-e',
 				'task(cmd => [$^X, q{-e}, $ARGV[0], $ARGV[1], $ARGV[2]], q{output.file} => $ARGV[2], lock => 1, quiet => 1, dir => $ARGV[3])',
-				$slow, $started, $out, $work);
-			POSIX::_exit(127);
+				$slow, $started, $out, $work)
+				or POSIX::_exit(127); # "or": a statement after exec drew "Statement unlikely to be reached" on a 5.16.3 smoker, "no warnings" notwithstanding
 		}
 		# loading perl and SimpleFlow takes 29-44 ms here; 10 s is headroom for
 		# a loaded machine, spent only if the first run never starts
@@ -374,7 +376,7 @@ subtest '%DEFAULTS refuses keys that name a particular step' => sub {
 
 # --- the end of stderr in a failure's message --------------------------------
 subtest "a failure's message ends with the last lines of stderr" => sub {
-	my $noisy = q{print STDERR "line $_\n" for 1 .. 10; exit 1};
+	my $noisy = q{print STDERR qq{line $_\n} for 1 .. 10; exit 1};
 	my @warned;
 	local $SIG{__WARN__} = sub { push @warned, @_ };
 	run_task(cmd => [$^X, '-e', $noisy], die => 0, quiet => 1);

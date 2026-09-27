@@ -66,8 +66,8 @@ sub interrupt_probe {
 		open STDOUT, '>', File::Spec->devnull;
 		open STDERR, '>', File::Spec->devnull;
 		no warnings 'exec';
-		exec($^X, "-I$lib_dir", '-e', $INTERRUPTED, $pid_file, $timeout);
-		POSIX::_exit(127);
+		exec($^X, "-I$lib_dir", '-e', $INTERRUPTED, $pid_file, $timeout)
+			or POSIX::_exit(127); # "or": a statement after exec drew "Statement unlikely to be reached" on a 5.16.3 smoker, "no warnings" notwithstanding
 	}
 	# Loading perl and SimpleFlow took 29-44 ms here (5.10.1 and 5.44.0,
 	# five runs); 10 s is headroom for a loaded smoker, and is only ever

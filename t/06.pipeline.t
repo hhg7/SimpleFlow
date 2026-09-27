@@ -19,6 +19,7 @@ use File::Spec;
 use FindBin ();
 use lib File::Spec->catdir($FindBin::Bin, 'lib'); # t/lib: CaptureStd, the tests' capture {}
 use CaptureStd 'capture';
+use NoDoubleQuote 'refuse_double_quotes'; # t/lib: what MSWin32 would garble in a list cmd
 use File::Temp 'tempdir';
 use JSON::PP ();
 use POSIX ();
@@ -51,6 +52,7 @@ my $RENDEZVOUS = q{use File::Spec; my ($d, $me, $all) = @ARGV; open my $m, '>', 
 
 sub run_parallel {
 	my @args = @_;
+	refuse_double_quotes(@args);
 	my (@records, $error);
 	my ($out, $err) = capture {
 		@records = eval { parallel(@args) };

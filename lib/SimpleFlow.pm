@@ -26,7 +26,7 @@ BEGIN {
 
 # Quoted, not the bare number: a numeric version is stringified through %g,
 # so 0.20 would become "0.2" and compare as older than "0.15" on CPAN.
-our $VERSION = '0.19';
+our $VERSION = '0.191';
 
 use Cwd 'getcwd';
 use Digest::MD5 'md5_hex';
@@ -522,9 +522,19 @@ sub _run_forked {
 	# back what the caller had before it execs.
 	my %caller_sig = map { $_ => $SIG{$_} } qw(INT QUIT);
 	local @SIG{qw(INT QUIT)} = ('IGNORE', 'IGNORE') if not $own_group;
+	# Held back from before the fork until the handlers below are in place.
+	# The command can send one as soon as it has started, and until 0.20 one
+	# that arrived before the handlers went to the caller's alone: the command
+	# was neither killed nor passed it, and ran on to be reported as done. A
+	# CPAN smoker (perl 5.16.3, Alpine) lost such a race in t/07.coverage.t.
+	my $held = POSIX::SigSet->new(POSIX::SIGHUP(), POSIX::SIGINT(), POSIX::SIGQUIT(), POSIX::SIGTERM());
+	my $caller_mask = POSIX::SigSet->new();
+	POSIX::sigprocmask(POSIX::SIG_BLOCK(), $held, $caller_mask)
+		or die "cannot block signals to run \"" . ((ref $cmd eq 'ARRAY') ? join(' ', @$cmd) : $cmd) . "\": $!";
 	my $pid = fork();
 	if (not defined $pid) {
 		my $error = $!;
+		POSIX::sigprocmask(POSIX::SIG_SETMASK(), $caller_mask);
 		_restore_alarm($caller_alarm, $started);
 		die "fork() failed, so the command cannot be run: $error";
 	}
@@ -542,6 +552,7 @@ sub _run_forked {
 		# a die -- and a die here unwinds into the caller's evals as a second
 		# copy of the caller's program. Until 0.18 exactly that happened.
 		no warnings 'exec';
+		POSIX::sigprocmask(POSIX::SIG_SETMASK(), $caller_mask); # a blocked mask survives exec
 		my $exec_ok = (ref $cmd eq 'ARRAY')
 			? exec({ $cmd->[0] } @{ $cmd }) # the block form never uses the shell, even for one word
 			: exec($cmd);
@@ -560,6 +571,7 @@ sub _run_forked {
 	close $exec_failed_read;
 	if ((defined $got) && ($got > 0)) {
 		waitpid $pid, 0;
+		POSIX::sigprocmask(POSIX::SIG_SETMASK(), $caller_mask); # one held meanwhile goes to the caller
 		_take_terminal(getpgrp()) if $foreground;
 		_restore_alarm($caller_alarm, $started);
 		local $! = $errno + 0;
@@ -582,6 +594,8 @@ sub _run_forked {
 		local @SIG{@interrupts} = ($own_group)
 			? (sub { $interrupted = shift; die "SF_INTERRUPTED\n" }) x @interrupts
 			: (sub { $interrupted = shift; kill $interrupted, $pid }) x @interrupts;
+		# one held since the fork is delivered here, to the handlers above
+		POSIX::sigprocmask(POSIX::SIG_SETMASK(), $caller_mask);
 		alarm $timeout if $own_group;
 		while (1) {
 			my $waited = waitpid $pid, ($foreground ? POSIX::WUNTRACED() : 0);
@@ -2025,7 +2039,7 @@ SimpleFlow - easy, simple workflow manager (and logger); for keeping track of an
 
 =head1 VERSION
 
-version 0.19
+version 0.20
 
 =head1 DESCRIPTION
 

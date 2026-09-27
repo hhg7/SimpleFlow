@@ -29,6 +29,7 @@ use File::Spec;
 use FindBin ();
 use lib File::Spec->catdir($FindBin::Bin, 'lib'); # t/lib: CaptureStd, the tests' capture {}
 use CaptureStd 'capture';
+use NoDoubleQuote 'refuse_double_quotes'; # t/lib: what MSWin32 would garble in a list cmd
 use File::Temp 'tempdir';
 use POSIX ();
 use Time::HiRes ();
@@ -66,6 +67,7 @@ sub run_captured {
 }
 sub run_task {
 	my @args = @_;
+	refuse_double_quotes(@args);
 	return run_captured(sub { task(@args) });
 }
 
@@ -171,7 +173,7 @@ subtest 'stale.cmd: the reason for a re-run is printed' => sub {
 subtest 'a failed directory output replaces the .failed directory of an earlier failure' => sub {
 	my $made = File::Spec->catdir($dir, 'dir' . ++$n);
 	# makes the directory $ARGV[0], writes $ARGV[1] into a file there, and fails
-	my $fail = q{mkdir $ARGV[0] or die; open my $f, '>', "$ARGV[0]/content" or die; print $f $ARGV[1]; exit 1};
+	my $fail = q{use File::Spec; mkdir $ARGV[0] or die; open my $f, '>', File::Spec->catfile($ARGV[0], 'content') or die; print $f $ARGV[1]; exit 1};
 	my ($first) = run_task(cmd => [$^X, '-e', $fail, $made, 'first'], 'output.dir' => $made, die => 0, quiet => 1);
 	is_deeply($first->{'failed.outputs'}, ["$made.failed"], 'the first failure moved the directory aside');
 	my ($second) = run_task(cmd => [$^X, '-e', $fail, $made, 'second'], 'output.dir' => $made, die => 0, quiet => 1);
@@ -184,9 +186,11 @@ subtest 'a failed directory output replaces the .failed directory of an earlier 
 # The command sends the signal to task()'s own process, which is the one
 # running this file: its parent, or, for parallel(), the pid given to it.
 # task() installs its handlers once the exec has succeeded -- which it learns
-# from a pipe that exec closes -- and the command then still has perl to start
-# (29-44 ms here) before it can send anything, so the handlers are in place.
-# Each command would sleep for 30 s if the signal did not end it; the bound
+# from a pipe that exec closes -- and holds these signals back from before the
+# fork until then, so one the command sends first is not lost. Until 0.20
+# nothing held them, and the 29-44 ms the command takes to start perl here
+# was relied on instead; a CPAN smoker lost that race, and t/08.fixes.t now
+# sends the signal inside the window on purpose. Each command would sleep for 30 s if the signal did not end it; the bound
 # of 10 s tells the two apart with headroom for a loaded machine.
 SKIP: {
 	skip 'needs POSIX signals and a real fork()', 4 if $^O eq 'MSWin32';
