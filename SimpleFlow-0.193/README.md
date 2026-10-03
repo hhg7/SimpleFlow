@@ -804,4 +804,4 @@ This software is free.  It is licensed under the same terms as Perl itself
 
 # Thanks
 
-A lot of this work used Claude AI, which was paid for by the University of Idaho's IMCI
+A lot of this work used Claude AI, which was paid for by the University of Idaho's IMCI, and to Brett Estrade and Hexmeister for help.
