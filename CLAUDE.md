@@ -169,7 +169,7 @@ not something a test run here will catch.
   killed the run is still in stdio's buffer when the process dies: measured
   with a `SIGKILL` part-way through a pipeline, a log that reached 862 bytes on
   a clean exit held 139 bytes after the kill. Any new routine that writes to
-  `log.fh` autoflushes it first.
+  `log_fh` autoflushes it first.
 
 ## Tests
 
@@ -299,8 +299,8 @@ written.
   written against 0.15.
 - **Removing, renaming or changing the type of a returned field is an
   incompatible change** and must be reported as such in the reply, so the
-  maintainer can note it in the release notes. 0.16 made `input.files` always
-  an array ref, matching `output.files`; that was flagged as incompatible.
+  maintainer can note it in the release notes. 0.16 made `input_files` always
+  an array ref, matching `output_files`; that was flagged as incompatible.
 - **`$VERSION` stays a quoted string.** As a bare number it is stringified
   through `%g`, so a future `0.20` becomes `"0.2"` and compares as older than
   `"0.15"` on CPAN. `dist.ini` takes the version from the module
