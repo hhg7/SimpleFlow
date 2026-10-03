@@ -138,9 +138,59 @@ sub table_to_html {
 	return "\n\n=begin html\n\n$html\n=end html\n\n";
 }
 
+# The same table as a POD list, for every reader but HTML's. The table is
+# "=begin html", which pod2text, perldoc and man pages drop, so until 0.192
+# their readers saw the prose round the tables of arguments and of the
+# record's fields, and neither table. The list goes in "=begin :text" and
+# "=begin :man", the targets Pod::Text and Pod::Man take, whose leading colon
+# says the region is POD to be formatted rather than raw output; an HTML
+# formatter (Pod::Simple::XHTML, metacpan's) skips both, and shows the table.
+# Each row is an =item named for its first cell; the middle cells follow as
+# "Header: value", and the last cell is the paragraph.
+sub table_to_pod {
+	my ($header, $body_ref, $anchor2title) = @_;
+	my $cells = sub {
+		my $row = shift;
+		my @cells = split /\|/, $row;
+		shift @cells if @cells && $cells[0] =~ /^\s*$/ && $row =~ /^\s*\|/;
+		pop @cells   if @cells && $cells[-1] =~ /^\s*$/ && $row =~ /\|\s*$/;
+		s/^\s+|\s+$//g foreach @cells;
+		return @cells;
+	};
+	my $inline = sub {
+		my $c = shift;
+		my @links;
+		# links out of the way first, as table_to_html does, then escaped
+		# angle brackets, so that a "=>" inside `code` is not a POD code's end
+		$c =~ s{\[ ([^\]]+) \] \( ([^)]+) \)}{
+			push @links, link_to_pod($1, $2, $anchor2title);
+			'PODTABLELINK' . $#links . 'END'
+		}gex;
+		$c =~ s/([<>])/($1 eq '<') ? 'E<lt>' : 'E<gt>'/ge;
+		$c =~ s/`([^`]+)`/C<$1>/g;
+		$c =~ s/\*\*([^\*]+)\*\*/B<$1>/g;
+		$c =~ s/\*([^\*]+)\*/I<$1>/g;
+		$c =~ s/PODTABLELINK(\d+)END/$links[$1]/g;
+		return $c;
+	};
+	my @headers = $cells->($header);
+	my $pod = "=over\n\n";
+	for my $row (@$body_ref) {
+		my @cells = map { $inline->($_) } $cells->($row);
+		my $item = shift @cells;
+		my $text = pop(@cells) // '';
+		my @middle = map { "$headers[$_ + 1]: $cells[$_]" } grep { $cells[$_] ne '' } 0 .. $#cells;
+		$pod .= "=item $item\n\n";
+		$pod .= join('; ', @middle) . ".\n\n" if @middle;
+		$pod .= "$text\n\n" if $text ne '';
+	}
+	$pod .= "=back\n\n";
+	return join '', map { "=begin :$_\n\n$pod=end :$_\n\n" } qw(text man);
+}
+
 # Pre-processor to extract GFM tables and replace them with alphanumeric placeholders
 sub extract_and_convert_tables {
-	my ($text) = @_;
+	my ($text, $anchor2title) = @_;
 	my @lines = split /\n/, $text;
 	my @out;
 	my @saved_tables;
@@ -162,7 +212,7 @@ sub extract_and_convert_tables {
 				push @body, $lines[$i];
 				$i++;
 			}
-			my $html = table_to_html($header, $sep, \@body);
+			my $html = table_to_html($header, $sep, \@body) . table_to_pod($header, \@body, $anchor2title);
 			push @saved_tables, $html;
 			# Use an alphanumeric placeholder to prevent Markdown parser interference
 			push @out, "\n\nHTMLTABLEPLACEHOLDER" . ($#saved_tables) . "\n\n";
@@ -271,7 +321,7 @@ my $anchor2title = build_anchor_map($md);
 
 # 1. Pre-process the Markdown to convert GFM tables into POD HTML blocks
 #    (links inside table cells are handled by table_to_html).
-my ($md_processed, $tables_ref) = extract_and_convert_tables($md);
+my ($md_processed, $tables_ref) = extract_and_convert_tables($md, $anchor2title);
 
 # 1b. Pre-process prose links into clean POD codes, stashed behind placeholders.
 my ($md_links, $links_ref) = extract_and_convert_links($md_processed, $anchor2title);

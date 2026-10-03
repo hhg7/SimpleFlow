@@ -179,8 +179,10 @@ suite for the 0.18 defects, `t/04.fixes.t` the regression suite for the 0.19
 defects, `t/05.features.t` the tests for the options added in 0.19,
 `t/06.pipeline.t` those for `parallel()` and `report()`,
 `t/07.coverage.t` and `t/more.coverage.t` reach the branches the others do
-not, and `t/08.fixes.t` is the regression suite for the 0.20 defects. All nine
-pass under `prove -Ilib t/`.
+not, `t/08.fixes.t` is the regression suite for the defects fixed in 0.191
+(its header says 0.20, the number that release was planned under), and
+`t/09.fixes.t` the regression suite for the 0.192 defects, those of the
+independent review of 0.191. All ten pass under `prove -Ilib t/`.
 
 The tests capture output with `capture {}` from `t/lib/CaptureStd.pm`, not
 `Capture::Tiny`, which is no longer a prerequisite of any kind. It reopens the
