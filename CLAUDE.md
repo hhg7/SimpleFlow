@@ -182,7 +182,12 @@ defects, `t/05.features.t` the tests for the options added in 0.19,
 not, `t/08.fixes.t` is the regression suite for the defects fixed in 0.191
 (its header says 0.20, the number that release was planned under), and
 `t/09.fixes.t` the regression suite for the 0.192 defects, those of the
-independent review of 0.191. All ten pass under `prove -Ilib t/`.
+independent review of 0.191, and `t/10.ignored.signals.t` checks that a signal
+the caller ignores stays ignored, holds the regression test for the 0.194
+`parallel()` defect, then re-runs every other file with HUP, INT,
+QUIT, TERM and TSTP inherited ignored (see "The suite must pass on a bare
+smoker" below). All eleven pass under `prove -Ilib t/`; the re-run makes the
+suite take about twice as long.
 
 The tests capture output with `capture {}` from `t/lib/CaptureStd.pm`, not
 `Capture::Tiny`, which is no longer a prerequisite of any kind. It reopens the
@@ -235,6 +240,17 @@ a test that skips on a CPAN smoker is a test that never runs there.
 A child process that has to load the module itself gets the path the test file
 loaded it from (`$INC{'SimpleFlow.pm'}`), never a bare `-MSimpleFlow`, so it
 tests this working copy rather than whatever is installed system-wide.
+
+A test that needs a signal to end a process sets that signal to `'DEFAULT'` in
+the process concerned — in the forked child before its `exec`, or in the
+command's own code — and never relies on inheriting the default. The harness
+may have inherited the signal ignored: a background job of a non-interactive
+shell starts with INT and QUIT ignored, `nohup` ignores HUP, and an ignored
+disposition survives `fork` and `exec`. `task()` and `parallel()` leave an
+inherited ignore alone by design, as `system()` does. 0.193 could not be
+installed by a `cpanm` run in the background because four tests broke this
+rule; `t/10.ignored.signals.t` re-runs the rest of the suite that way so that a
+new one fails here first.
 
 ### Coverage
 
