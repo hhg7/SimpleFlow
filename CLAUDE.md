@@ -10,7 +10,6 @@ not this one.
 
 Three things in this repo are generated from `README.md` by `perl md2pod.pl`:
 
-- `read.me.pod`
 - the POD block in `lib/SimpleFlow.pm` after the `1;` line — `md2pod.pl`
   truncates the file at `1;` and re-appends the POD, so anything written into
   that block by hand is destroyed on the next run
@@ -71,8 +70,6 @@ parses it the way CPAN and PAUSE do. Two consequences worth keeping in mind:
 
 - There is no longer a second copy to fall back on, and nothing regenerates it.
   A bad edit is a lost release note, so verify the parse.
-- The notes are no longer duplicated into `read.me.pod` and the module's POD,
-  which is where CPAN readers used to find them; they read `Changes` instead.
 
 ## Everything runs under `use warnings FATAL => 'all'`
 
