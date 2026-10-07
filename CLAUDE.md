@@ -249,6 +249,40 @@ installed by a `cpanm` run in the background because four tests broke this
 rule; `t/10.ignored.signals.t` re-runs the rest of the suite that way so that a
 new one fails here first.
 
+### Never assume the wall clock keeps pace with `sleep`
+
+A test must not depend on file times or `time` moving forward while it waits.
+`sleep` counts elapsed time, but file times and `time` read the system clock,
+which can lag, or be stepped back, on a smoker in a VM. Mtimes are also whole
+seconds on some perls and filesystems. 0.194 failed on a perl 5.10.1 smoker
+in a VM because `t/01.t` compared `-M` before and after a `sleep 1`. The file
+had been rewritten, but both readings fell in the same second.
+
+- To show that a step ran or rewrote its output, check the record (`done eq
+  'now'`) and the file's *contents*, not its mtime.
+- When a test needs one file to be newer than another, as `stale` does, set the
+  times with `utime` well apart (100 s, as `t/05.features.t` and block 12 of
+  `t/02.fixes.t` do). Do not write the files with a `sleep` between them.
+- An elapsed-time bound, such as "the interrupt ended it promptly", should be
+  measured with `Time::HiRes::time()` against a generous limit. Its comment
+  should give the time actually measured, as `t/10.ignored.signals.t` does.
+
+The same applies to anything a CPAN smoker's environment can change but this
+machine never does: a test that passes here, under every installed perl, can
+still be wrong. When a smoker report fails, find out what was different about
+that smoker before deciding to test on another perl. The failures behind
+0.193 (signals inherited ignored) and 0.194 (the clock) had nothing to do with
+the perl version, and adding a perl would not have caught either one.
+
+### Keep the facts in this file true
+
+The installed perls, which prereqs each one has, and the test counts quoted
+here change without anyone editing this file. Before relying on one of them
+in a recommendation, check it on the machine. Up to 2026-10-07, this file said
+`perl-5.42.3` lacked the prereqs, long after they had been installed, and so
+Claude recommended installing them again. If a fact here is wrong, correct it
+in the same session and give the date it was checked.
+
 ### Coverage
 
 `sh cover.sh` deletes the old database, re-runs the suite under
@@ -289,15 +323,15 @@ Under `/home/con/perl5/perlbrew/perls/`: `perl-5.44.0` (the default),
 `perl-5.42.3`, `perl-5.12.5`, `perl-5.10.1`, and `5.44.0-quadmath`. The module
 is pure Perl, so NV width is irrelevant; the *version* spread is what matters.
 
-The prereqs (`Data::Printer`, `Devel::Confess`, `Test::Exception`) are
-installed on `perl-5.10.1` and `perl-5.12.5` but **not**
-on `perl-5.42.3`, so 5.42.3 cannot run the suite as it stands. Check the oldest
-supported perl for anything touching `lib/SimpleFlow.pm`:
+Every prereq in `dist.ini`, runtime and test, is installed on `perl-5.10.1`,
+`perl-5.12.5` and `perl-5.42.3`, so each of them can run the suite. Check the
+oldest supported perl for anything touching `lib/SimpleFlow.pm`:
 
     /home/con/perl5/perlbrew/perls/perl-5.10.1/bin/perl -Ilib \
         -MTest::Harness -e 'runtests(glob "t/*.t")'
 
-As of 2026-09-02 that passes all 48 tests, as does `prove -Ilib t/` on 5.44.0.
+As of 2026-10-07 that passes all 210 tests, as does the same command with
+`perl-5.42.3`, and `prove -Ilib t/` on 5.44.0.
 
 ## Compatibility of the interface itself
 
